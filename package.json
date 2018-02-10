@@ -2,8 +2,8 @@
   "name": "kyoko-mesh",
   "version": "0.0.2",
   "description": "",
-  "main": "dist/src/index.js",
-  "types": "dist/src/index.d.ts",
+  "main": "./dist/src/index.js",
+  "types": "./dist/src/index.d.ts",
   "scripts": {
     "debug": "npm run build && node --inspect-brk dist/test/index.js",
     "test": "mocha -r ts-node/register test/index.ts",
