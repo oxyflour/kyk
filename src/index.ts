@@ -11,7 +11,6 @@ export const DEFAULT_MESH_OPTS = {
     nodeName: '',
     announceInterval: 10 * 1000,
     remoteCallTimeout: 30 * 1000,
-    listenOptions: undefined as net.ListenOptions | undefined,
     isDestroyed: false,
 }
 
@@ -50,7 +49,6 @@ export default class KyokoMesh extends EventEmitter {
         super()
         this.opts = { ...DEFAULT_MESH_OPTS, ...opts }
         this.opts.nodeName = this.opts.nodeName || 'n' + Math.random().toString().slice(2, 10)
-
         this.connect(urls)
         this.register(api)
         this.syncUpstream()
@@ -205,7 +203,7 @@ export default class KyokoMesh extends EventEmitter {
             io: SocketIO.Server,
         }>(resolve => {
             const httpServer = http.createServer()
-            httpServer.listen(this.opts.listenOptions, () => resolve(servers))
+            httpServer.listen(opts, () => resolve(servers))
             const ioServer = listen(httpServer)
             ioServer.on('connect', sock => this.acceptDownstream(sock))
             const servers = { http: httpServer, io: ioServer }
