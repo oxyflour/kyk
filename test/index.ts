@@ -37,14 +37,12 @@ describe('test', async () => {
     let root: KyokoMesh, node1: KyokoMesh, node2: KyokoMesh
     before(async () => {
         root = new KyokoMesh()
-        await new Promise(resolve => root.once('listening', resolve))
+        node1 = new KyokoMesh([], api1)
+        node2 = new KyokoMesh([], api2)
 
-        const url = `http://localhost:${root.network.servers.http.address().port}`
-        node1 = new KyokoMesh(url, api1)
-        node2 = new KyokoMesh(url, api2)
-        await Promise.all([node1, node2].map(node => {
-            return new Promise(resolve => node.once('upstream-connected', resolve))
-        }))
+        const servers = await root.listen(),
+            url = `http://localhost:${servers.http.address().port}`
+        await Promise.all([node1, node2].map(node => node.connect(url)))
     })
 
     it(`simple async function`, async () => {
