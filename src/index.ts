@@ -165,6 +165,10 @@ export default class KyokoMesh extends EventEmitter {
         }
     }
 
+    get name() {
+        return this.opts.nodeName
+    }
+
     dir(prefix: string) {
         const entries = Object.keys({ ...this.localRegistry, ...this.downstreamRegistry })
                 .filter(entry => entry.startsWith(prefix + '/'))
