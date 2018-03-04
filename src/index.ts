@@ -1,229 +1,158 @@
-import * as URL from 'url'
-import * as path from 'path'
-import * as http from 'http'
-import * as net from 'net'
+import * as os from 'os'
 import { EventEmitter } from 'events'
-import { listen } from 'socket.io'
-import { connect } from 'socket.io-client'
+import { Etcd3, Namespace, Lease, IOptions } from 'etcd3'
 import { AsyncFunctions, AsyncFunction, hookFunc, wrapFunc } from './utils'
 
 export const DEFAULT_MESH_OPTS = {
     nodeName: '',
-    announceInterval: 10 * 1000,
-    remoteCallTimeout: 30 * 1000,
-    isDestroyed: false,
+    etcdPrefix: 'etcd-mesh/',
+    etcdOpts: { } as IOptions,
+    etcdLease: 10,
+    announceInterval: 5,
+    callTimeout: 5 * 60,
+    destroyed: false,
 }
 
-export const DEFAULT_CALL_OPTS = {
-    maxStackLength: 10,
-    stack: [ ] as { nodeName: string, timestamp: number }[]
-}
+export default class EtcdMesh extends EventEmitter {
+    private readonly opts: typeof DEFAULT_MESH_OPTS
+    private readonly client: Etcd3
+    private readonly etcd: Namespace
+    private readonly lease: Lease
 
-export interface ServiceRegistry {
-    lastUpdated?: number,
-}
+    private calls = { } as { [id: string]: { resolve: Function, reject: Function, addedAt: number } }
+    private methods = { } as { [entry: string]: Function }
 
-export interface UpstreamRegistry extends ServiceRegistry {
-    upstream: SocketIOClient.Socket,
-}
-
-export interface DownstreamRegistry extends ServiceRegistry {
-    downstream: SocketIO.Socket,
-}
-
-export default class KyokoMesh extends EventEmitter {
-    private opts = { } as typeof DEFAULT_MESH_OPTS
-
-    private servers = [ ] as { http: http.Server, io: SocketIO.Server }[]
-    private upstreams = { } as { [URL: string]: UpstreamRegistry }
-    private downstreams = { } as { [SockID: string]: DownstreamRegistry }
-
-    private localRegistry = { } as { [Entry: string]: AsyncFunction }
-    private upstreamSocks = { } as { [URL: string]: SocketIOClient.Socket }
-    private downstreamRegistry = { } as { [Entry: string]: { [SockID: string]: DownstreamRegistry } }
-
-    constructor(
-            urls = [ ] as string | string[],
-            api = { } as AsyncFunctions,
-            opts = { } as Partial<typeof DEFAULT_MESH_OPTS>) {
+    constructor(opts = { } as Partial<typeof DEFAULT_MESH_OPTS>, api = { } as any) {
         super()
         this.opts = { ...DEFAULT_MESH_OPTS, ...opts }
-        this.opts.nodeName = this.opts.nodeName || 'n' + Math.random().toString().slice(2, 10)
-        this.connect(urls)
+        this.client = new Etcd3(this.opts.etcdOpts)
+        this.etcd = this.client.namespace(this.opts.etcdPrefix)
+        this.lease = this.etcd.lease(this.opts.etcdLease),
         this.register(api)
-        this.syncUpstream()
+        this.init()
     }
 
-    private connectToUpstream(upstream: SocketIOClient.Socket) {
-        upstream.on('connect', () => {
-            this.upstreams[upstream.io.uri] = { upstream }
-            this.emit('upstream-connected', upstream)
-            this.syncUpstream()
-        })
-        upstream.on('disconnect', () => {
-            delete this.upstreams[upstream.io.uri]
-            this.emit('upstream-disconnected', upstream)
-        })
-        upstream.on('service-remote-call', (input: any, callback: any) => {
-            this.onRemoteCall(input).then(callback)
-        })
-    }
+    private async init() {
+        const name = this.opts.nodeName || (this.opts.nodeName = Math.random().toString(16).slice(2, 10))
 
-    private acceptDownstream(downstream: SocketIO.Socket) {
-        const registry = { downstream }
-        this.downstreams[downstream.id] = registry
-        this.emit('downstream-connected', downstream)
-        downstream.on('disconnect', async () => {
-            delete this.downstreams[downstream.id]
-            for (const entry in this.downstreamRegistry) {
-                delete this.downstreamRegistry[downstream.id]
-            }
-            this.emit('downstream-disconnected', downstream)
-            this.syncUpstream()
-        })
-        downstream.on('service-remote-call', (input, callback) => {
-            this.onRemoteCall(input).then(callback)
-        })
-        this.syncUpstream()
-    }
-
-    private lastSyncTimeout: NodeJS.Timer | undefined
-    private async syncUpstream() {
-        const entries = Object.keys({ ...this.localRegistry, ...this.downstreamRegistry })
-        await Promise.all(Object.keys(this.upstreams).map(async url => {
-            const registry = this.upstreams[url]
+        const req = await this.etcd.watch().prefix(`rpc-req/${name}/`).create()
+        req.on('put', async kv => {
+            const id = kv.key.toString().split('/').pop() || '',
+                { name, entry, args } = JSON.parse(kv.value.toString()),
+                res = { ret: null as null | any, err: null as null | Error }
             try {
-                await this.remote(registry).sync(registry.upstream.id, entries)
+                res.ret = await this.onRemoteCall(name, entry, args)
             } catch (err) {
-                console.error(`${this.opts.nodeName}: announce to ${url} failed`, err)
+                res.err = err
             }
-        }))
-        if (!this.opts.isDestroyed) {
-            this.lastSyncTimeout && clearTimeout(this.lastSyncTimeout)
-            this.lastSyncTimeout = setTimeout(() => this.syncUpstream(), this.opts.announceInterval)
-        }
+            await this.etcd.delete().key(kv.key.toString())
+            await this.lease.put(`rpc-res/${name}/${id}`).value(JSON.stringify(res))
+        })
+
+        const res = await this.etcd.watch().prefix(`rpc-res/${name}/`).create()
+        res.on('put', async kv => {
+            const id = kv.key.toString().split('/').pop() || '',
+                { err, ret } = JSON.parse(kv.value.toString()),
+                { resolve, reject } = this.calls[id] || [null, null]
+            if (resolve && reject) {
+                err ? reject(err) : resolve(ret)
+                delete this.calls[id]
+            } else {
+                console.error(`call id "${id}" not found`)
+            }
+            await this.etcd.delete().key(kv.key.toString())
+        })
+
+        await this.poll()
+        this.emit('ready')
     }
 
-    private async onRemoteCall({ method, args }: { method: string, args: any[] }) {
-        const resp = { } as { ret?: any, err?: Error }
+    private pollTimeout = null as null | NodeJS.Timer
+    private async poll() {
+        if (this.pollTimeout) {
+            clearTimeout(this.pollTimeout)
+        }
         try {
-            resp.ret = await (this as any)[method](...args)
+            await this.recycle()
+            await this.announce()
         } catch (err) {
-            resp.err = err
+            this.emit('error', err)
         }
-        return resp
+        this.pollTimeout = this.opts.destroyed ? null : setTimeout(() => {
+            this.poll()
+        }, this.opts.announceInterval * 1000)
     }
 
-    private callRemote<K extends keyof KyokoMesh>(sock: SocketIO.Socket | SocketIOClient.Socket, method: K): KyokoMesh[K] {
-        return (...args: any[]) => new Promise((resolve, reject) => {
-            setTimeout(reject, this.opts.remoteCallTimeout, Error(`timeout when dispatching ${method}`))
-            const callback = ({ err, ret }: { err: Error, ret: any }) => err ? reject(err) : resolve(ret)
-            ;(sock as any).emit('service-remote-call', { method, args }, callback)
+    private async onRemoteCall(from: string, entry: string, args: any[]) {
+        if (this.methods[entry]) {
+            return await this.methods[entry](...args)
+        } else {
+            throw Error(`entry "${entry}" not found`)
+        }
+    }
+    
+    private async callRemote(entry: string, args: any[]) {
+        const target = await this.getCallTarget(entry),
+            id = Math.random().toString(16).slice(2, 10) + '@' + os.hostname(),
+            name = this.opts.nodeName,
+            addedAt = Date.now()
+        return await new Promise(async (resolve, reject) => {
+            this.calls[id] = { resolve, reject, addedAt }
+            await this.lease.put(`rpc-req/${target}/${id}`).value(JSON.stringify({ name, entry, args }))
         })
     }
 
-    private remote(registry: UpstreamRegistry | DownstreamRegistry) {
-        const sock = (registry as UpstreamRegistry).upstream || (registry as DownstreamRegistry).downstream
-        return {
-            call: this.callRemote(sock, 'call'),
-            sync: this.callRemote(sock, 'sync'),
-        }
-    }
-
-    async call(entry: string, args: any[], opts: typeof DEFAULT_CALL_OPTS): Promise<any> {
-        const handler = this.localRegistry[entry]
-        if (handler) {
-            return await handler(...args)
-        }
-        opts = { ...opts, stack: opts.stack.concat({ nodeName: this.opts.nodeName, timestamp: Date.now() }) }
-        if (opts.stack.length > opts.maxStackLength) {
-            throw Error(`stack overflow for entry "${entry}"`)
-        }
-        const downstreamRegistry = Object.values(this.downstreamRegistry[entry] || { })
-        for (const registry of [...downstreamRegistry, ...Object.values(this.upstreams)]) {
-            return await this.remote(registry).call(entry, args, opts)
-        }
-        throw Error(`no service found for entry "${entry}"`)
-    }
-
-    async sync(sockId: string, entries: string[]): Promise<any> {
-        const lastEntries = Object.keys(this.downstreamRegistry).sort().join(';')
-        for (const entry in this.downstreamRegistry) {
-            delete this.downstreamRegistry[entry][sockId]
-            if (!Object.keys(this.downstreamRegistry[entry])) {
-                delete this.downstreamRegistry[entry]
+    async recycle() {
+        const timeout = Date.now() - this.opts.callTimeout * 1000
+        for (const key in this.calls) {
+            const { addedAt, reject } = this.calls[key]
+            if (addedAt < timeout) {
+                reject(Error(`call timeout`))
+                delete this.calls[key]
             }
         }
-        const { downstream } = this.downstreams[sockId],
-            lastUpdated = Date.now()
-        for (const entry of entries) {
-            const registries = this.downstreamRegistry[entry] || (this.downstreamRegistry[entry] = { })
-            registries[sockId] = { downstream, lastUpdated }
+    }
+
+    private announcedEntries = { } as { [entry: string]: Function }
+    async announce() {
+        const entries = Object.keys(this.methods).sort().join(';'),
+            name = this.opts.nodeName,
+            updatedAt = Date.now()
+        if (entries !== Object.keys(this.announcedEntries).sort().join(';')) {
+            const promises = [ ] as any[],
+                toDel = Object.keys(this.announcedEntries).filter(entry => !this.methods[entry])
+                    .map(entry => this.etcd.delete().key(`rpc-entry/${entry}/$/${name}`)),
+                toPut = Object.keys(this.methods).filter(entry => !this.announcedEntries[entry])
+                    .map(entry => this.lease.put(`rpc-entry/${entry}/$/${name}`).value(updatedAt))
+            await Promise.all(promises.concat(toDel).concat(toPut))
+            this.announcedEntries = { ...this.methods }
+        } else {
+            await this.lease.grant()
         }
-        if (Object.keys(this.downstreamRegistry).sort().join(';') !== lastEntries) {
-            this.syncUpstream()
-        }
     }
 
-    get name() {
-        return this.opts.nodeName
+    private async getCallTarget(entry: string) {
+        const targets = await this.etcd.namespace(`rpc-entry/${entry}/$/`).getAll().keys()
+        return targets[Math.floor(targets.length * Math.random())]
     }
-
-    dir(prefix: string) {
-        const entries = Object.keys({ ...this.localRegistry, ...this.downstreamRegistry })
-                .filter(entry => entry.startsWith(prefix + '/'))
-                .map(entry => entry.substr(prefix.length + 1).split('/'))
-                .map(([name, ...rest]) => name + (rest.length ? '/' : ''))
-        return Array.from(new Set(entries))
-    }
-
-    query<T extends AsyncFunctions>(api: T, opts = { } as Partial<typeof DEFAULT_CALL_OPTS>) {
+    
+    query<T extends AsyncFunctions>(api: T) {
         return hookFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
-            return (...args: any[]) => this.call(entry, args, { ...DEFAULT_CALL_OPTS, ...opts })
+            return (...args: any[]) => this.callRemote(entry, args)
         })
     }
-
+    
     register<T extends AsyncFunctions>(api: T) {
         return wrapFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
                 [{ receiver, target }] = stack
-            return this.localRegistry[entry] = target.bind(receiver)
-        })
-    }
-
-    connect(urls: string | string[]) {
-        const URLs = Array.isArray(urls) ? urls : [urls]
-        return Promise.all(URLs.filter(url => !this.upstreamSocks[url]).map(async url => {
-            const sock = this.upstreamSocks[url] = connect(url)
-            this.connectToUpstream(sock)
-            await new Promise(resolve => sock.once('connect', resolve))
-        }))
-    }
-
-    listen(opts?: net.ListenOptions) {
-        return new Promise<{
-            http: http.Server,
-            io: SocketIO.Server,
-        }>(resolve => {
-            const httpServer = http.createServer()
-            httpServer.listen(opts, () => resolve(servers))
-            const ioServer = listen(httpServer)
-            ioServer.on('connect', sock => this.acceptDownstream(sock))
-            const servers = { http: httpServer, io: ioServer }
-            this.servers.push(servers)
+            return this.methods[entry] = target.bind(receiver)
         })
     }
 
     destroy() {
-        for (const { upstream } of Object.values(this.upstreams)) {
-            upstream.close()
-        }
-        for (const { http, io } of this.servers) {
-            http.close()
-            io.close()
-        }
-        this.opts.isDestroyed = true
-        this.lastSyncTimeout && clearTimeout(this.lastSyncTimeout)
+        this.opts.destroyed = true
+        this.client.close()
     }
 }

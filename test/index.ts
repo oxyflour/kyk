@@ -1,4 +1,4 @@
-import KyokoMesh from '../src'
+import EtcdMesh from '../src'
 import * as assert from 'assert'
 
 const api1 = {
@@ -33,16 +33,19 @@ const api2 = {
     },
 }
 
-describe('test', async () => {
-    let root: KyokoMesh, node1: KyokoMesh, node2: KyokoMesh
-    before(async () => {
-        root = new KyokoMesh()
-        node1 = new KyokoMesh([], api1)
-        node2 = new KyokoMesh([], api2)
+const etcdOpts = {
+    hosts: 'http://localhost:2379',
+}
 
-        const servers = await root.listen(),
-            url = `http://localhost:${servers.http.address().port}`
-        await Promise.all([node1, node2].map(node => node.connect(url)))
+describe('test', async function() {
+    this.timeout(30000)
+
+    let node1: EtcdMesh, node2: EtcdMesh
+    before(async () => {
+        node1 = new EtcdMesh({ etcdOpts }, api1)
+        await new Promise(resolve => node1.once('ready', resolve))
+        node2 = new EtcdMesh({ etcdOpts }, api2)
+        await new Promise(resolve => node2.once('ready', resolve))
     })
 
     it(`simple async function`, async () => {
@@ -61,12 +64,7 @@ describe('test', async () => {
         assert.equal(await node1.query(api2).testSimple2(), 'test pass again')
     })
 
-    it(`dir from root`, () => {
-        assert.deepEqual(root.dir('nested'), ['method', 'nesteded/'])
-    })
-
-    after(() => {
-        root.destroy()
+    after(async () => {
         node1.destroy()
         node2.destroy()
     })

@@ -20,16 +20,13 @@ const api = {
 }
 
 async function start() {
-    const root = new KyokoMesh()
-    await new Promise(resolve => root.once('listening', resolve))
-
-    const upstreamURL = `http://localhost:${root.network.servers.http.address().port}`,
+    const
         // server provide api
-        server = new KyokoMesh(upstreamURL, api)
+        server = new KyokoMesh({ }, api)
         // client use it with client.query(api)
-        client = new KyokoMesh(upstreamURL)
+        client = new KyokoMesh()
     await Promise.all([server, client].map(node => {
-        return new Promise(resolve => node.once('upstream-connected', resolve))
+        return new Promise(resolve => node.once('ready', resolve))
     }))
 
     console.log('hello ' + await client.query(api).hello())
