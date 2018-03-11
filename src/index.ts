@@ -1,6 +1,6 @@
 import * as os from 'os'
 //@ts-ignore
-import * as serializeError from 'serialize-error'
+import serializeError from 'serialize-error'
 import { EventEmitter } from 'events'
 import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 import { AsyncFunctions, AsyncFunction, hookFunc, wrapFunc } from './utils'
