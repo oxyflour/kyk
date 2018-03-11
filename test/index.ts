@@ -37,7 +37,7 @@ const etcdOpts = {
     hosts: 'http://localhost:2379',
 }
 
-describe('test', async function() {
+describe('test', function() {
     this.timeout(30000)
 
     let node1: EtcdMesh, node2: EtcdMesh
@@ -49,23 +49,45 @@ describe('test', async function() {
     })
 
     it(`simple async function`, async () => {
+        const start = Date.now()
+        for (const i in Array(500).fill(0)) {
+            await node2.query(api1).testSimple()
+        }
+        console.log(`t1: ${(Date.now() - start) / 500}ms`)
         assert.equal(await node2.query(api1).testSimple(), 'test pass')
     })
 
     it(`this within function`, async () => {
+        const start = Date.now()
+        for (const i in Array(500).fill(0)) {
+            await node2.query(api1).testThis()
+        }
+        console.log(`t2: ${(Date.now() - start) / 500}ms`)
         assert.equal(await node2.query(api1).testThis(), 'this test pass')
     })
 
     it(`nested function within object`, async () => {
+        const start = Date.now()
+        for (const i in Array(500).fill(0)) {
+            await node2.query(api1).testNested()
+        }
+        console.log(`t3: ${(Date.now() - start) / 500}ms`)
         assert.equal(await node2.query(api1).testNested(), 'nested nesteded test pass')
     })
 
     it(`call from another node`, async () => {
+        const start = Date.now()
+        for (const i in Array(500).fill(0)) {
+            await node1.query(api2).testSimple2()
+        }
+        console.log(`t4: ${(Date.now() - start) / 500}ms`)
         assert.equal(await node1.query(api2).testSimple2(), 'test pass again')
     })
 
     after(async () => {
-        node1.destroy()
-        node2.destroy()
+        await node1.destroy()
+        await node2.destroy()
+        // FIXME:
+        setTimeout(() => process.exit(0), 2000)
     })
 })
