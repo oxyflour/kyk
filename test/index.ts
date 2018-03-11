@@ -75,12 +75,21 @@ describe('test', function() {
         assert.equal(await node2.query(api1).testNested(), 'nested nesteded test pass')
     })
 
+    it(`nested function within object2`, async () => {
+        const start = Date.now()
+        for (const i in Array(500).fill(0)) {
+            await node2.query(api1).nested.method()
+        }
+        console.log(`t4: ${(Date.now() - start) / 500}ms`)
+        assert.equal(await node2.query(api1).nested.method(), 'nested')
+    })
+
     it(`call from another node`, async () => {
         const start = Date.now()
         for (const i in Array(500).fill(0)) {
             await node1.query(api2).testSimple2()
         }
-        console.log(`t4: ${(Date.now() - start) / 500}ms`)
+        console.log(`t5: ${(Date.now() - start) / 500}ms`)
         assert.equal(await node1.query(api2).testSimple2(), 'test pass again')
     })
 

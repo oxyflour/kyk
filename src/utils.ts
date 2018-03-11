@@ -14,11 +14,7 @@ export function hookFunc<M extends AsyncFunctions>(
     return new Proxy(methods, {
         get(target, propKey, receiver) {
             const next = [{ target, propKey, receiver }].concat(stack)
-            if (typeof target[propKey] === 'function') {
-                return proxy(...next)
-            } else {
-                return hookFunc(target[propKey] as AsyncFunctions, proxy, next)
-            }
+            return hookFunc(proxy(...next) as AsyncFunctions, proxy, next)
         }
     })
 }
