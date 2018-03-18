@@ -55,9 +55,9 @@ export default class EtcdMesh extends EventEmitter {
         const res = this.watchers.res = await this.etcd.namespace(`rpc-res/${name}/`).watch().prefix('').create()
         res.on('put', async kv => {
             const id = kv.key.toString(),
-                { err, ret } = JSON.parse(kv.value.toString()),
-                { resolve, reject } = this.calls[id] || [null, null]
-            if (resolve && reject) {
+                { err, ret } = JSON.parse(kv.value.toString())
+            if (this.calls[id]) {
+                const { resolve, reject } = this.calls[id]
                 err ? reject(err) : resolve(ret)
                 delete this.calls[id]
             } else {
@@ -95,15 +95,19 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private async callRemote(entry: string, args: any[]) {
-        const target = await this.getCallTarget(entry),
-            id = Math.random().toString(16).slice(2, 10) + '@' + os.hostname(),
-            name = this.opts.nodeName,
-            addedAt = Date.now()
-        return await new Promise(async (resolve, reject) => {
-            this.calls[id] = { resolve, reject, addedAt }
-            const req = JSON.stringify({ name, entry, args })
-            await this.lease.put(`rpc-req/${target}/${id}`).value(req)
-        })
+        const target = await this.getCallTarget(entry)
+        if (target) {
+            const id = Math.random().toString(16).slice(2, 10) + '@' + os.hostname(),
+                name = this.opts.nodeName,
+                addedAt = Date.now()
+            return await new Promise(async (resolve, reject) => {
+                this.calls[id] = { resolve, reject, addedAt }
+                const req = JSON.stringify({ name, entry, args })
+                await this.lease.put(`rpc-req/${target}/${id}`).value(req)
+            })
+        } else {
+            throw Error(`entry "${entry}" not found`)
+        }
     }
 
     async recycle() {
