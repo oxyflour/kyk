@@ -34,11 +34,11 @@ export default class EtcdMesh extends EventEmitter {
         this.init()
     }
 
-    watchers = { } as { req: Watcher, res: Watcher }
+    private callWatchers = { } as { req: Watcher, res: Watcher }
     private async init() {
         const name = this.opts.nodeName || (this.opts.nodeName = Math.random().toString(16).slice(2, 10))
 
-        const req = this.watchers.req = await this.etcd.namespace(`rpc-req/${name}/`).watch().prefix('').create()
+        const req = this.callWatchers.req = await this.etcd.namespace(`rpc-req/${name}/`).watch().prefix('').create()
         req.on('put', async kv => {
             const id = kv.key.toString(),
                 { name, entry, args } = JSON.parse(kv.value.toString()),
@@ -52,7 +52,7 @@ export default class EtcdMesh extends EventEmitter {
             await this.etcd.delete().key(id)
         })
 
-        const res = this.watchers.res = await this.etcd.namespace(`rpc-res/${name}/`).watch().prefix('').create()
+        const res = this.callWatchers.res = await this.etcd.namespace(`rpc-res/${name}/`).watch().prefix('').create()
         res.on('put', async kv => {
             const id = kv.key.toString(),
                 { err, ret } = JSON.parse(kv.value.toString())
@@ -90,12 +90,11 @@ export default class EtcdMesh extends EventEmitter {
         if (this.methods[entry]) {
             return await this.methods[entry](...args)
         } else {
-            throw Error(`entry "${entry}" not found`)
+            throw Error(`entry "${entry}" not found on node "${this.opts.nodeName}"`)
         }
     }
     
-    private async callRemote(entry: string, args: any[]) {
-        const target = await this.getCallTarget(entry)
+    private async doCallRemote(target: string, entry: string, args: any[]) {
         if (target) {
             const id = Math.random().toString(16).slice(2, 10) + '@' + os.hostname(),
                 name = this.opts.nodeName,
@@ -106,7 +105,7 @@ export default class EtcdMesh extends EventEmitter {
                 await this.lease.put(`rpc-req/${target}/${id}`).value(req)
             })
         } else {
-            throw Error(`entry "${entry}" not found`)
+            throw Error(`no targets for entry "${target}"`)
         }
     }
 
@@ -139,24 +138,27 @@ export default class EtcdMesh extends EventEmitter {
         }
     }
 
-    entryCache = { } as { [entry: string]: { targets: any, watcher: Watcher } }
-    private async getCallTarget(entry: string) {
+    private entryCache = { } as { [entry: string]: { targets: any, watcher: Watcher } }
+    async list(entry: string) {
         if (!this.entryCache[entry]) {
             const namespace = this.etcd.namespace(`rpc-entry/${entry}/$/`),
-                targets = await namespace.getAll().json(),
                 watcher = await namespace.watch().prefix('').create()
+            let targets = { } as { [key: string]: object }
+            watcher.on('connected', async () => targets = await namespace.getAll().json())
             watcher.on('put', kv => targets[kv.key.toString()] = JSON.parse(kv.value.toString()))
             watcher.on('delete', kv => delete targets[kv.key.toString()])
             this.entryCache[entry] = { targets, watcher }
         }
-        const keys = Object.keys(this.entryCache[entry].targets)
-        return keys[Math.floor(keys.length * Math.random())]
+        return this.entryCache[entry].targets
     }
     
-    query<T extends AsyncFunctions>(api: T) {
+    query<T extends AsyncFunctions>(api: T, opts = { } as { target?: string }) {
         return hookFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
-            return (...args: any[]) => this.callRemote(entry, args)
+            return async (...args: any[]) => {
+                const target = opts.target || Object.keys(await this.list(entry)).pop() || ''
+                return await this.doCallRemote(target, entry, args)
+            }
         })
     }
     
@@ -173,8 +175,8 @@ export default class EtcdMesh extends EventEmitter {
 
         await Promise.all([
             this.lease.revoke(),
-            this.watchers.req.cancel(),
-            this.watchers.res.cancel(),
+            this.callWatchers.req.cancel(),
+            this.callWatchers.res.cancel(),
             ... Object.values(this.entryCache).map(({ watcher }) => watcher.cancel())
         ])
 
