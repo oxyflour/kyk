@@ -47,7 +47,7 @@ export default class EtcdMesh extends EventEmitter {
             try {
                 res.ret = await this.onRemoteCall(name, entry, args)
             } catch (err) {
-                res.err = serializeError(err)
+                res.err = Object.assign(serializeError(err), { from: this.opts.nodeName })
             }
             await this.lease.put(`rpc-res/${name}/${id}`).value(JSON.stringify(res))
             await reqns.delete().key(id)
@@ -60,7 +60,7 @@ export default class EtcdMesh extends EventEmitter {
                 { err, ret } = JSON.parse(kv.value.toString())
             if (this.calls[id]) {
                 const { resolve, reject } = this.calls[id]
-                err ? reject(err) : resolve(ret)
+                err ? reject(Object.assign(new Error(), err)) : resolve(ret)
                 delete this.calls[id]
             } else {
                 console.error(`call id "${id}" not found`)
@@ -147,6 +147,7 @@ export default class EtcdMesh extends EventEmitter {
             const namespace = this.etcd.namespace(`rpc-entry/${entry}/$/`),
                 watcher = await namespace.watch().prefix('').create()
             cache = this.entryCache[entry] = { targets: { } as any, watcher }
+            cache.targets = await namespace.getAll()
             watcher.on('connected', async () => cache.targets = await namespace.getAll().json())
             watcher.on('put', kv => cache.targets[kv.key.toString()] = JSON.parse(kv.value.toString()))
             watcher.on('delete', kv => delete cache.targets[kv.key.toString()])
