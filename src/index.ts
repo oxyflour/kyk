@@ -38,7 +38,8 @@ export default class EtcdMesh extends EventEmitter {
     private async init() {
         const name = this.opts.nodeName || (this.opts.nodeName = Math.random().toString(16).slice(2, 10))
 
-        const req = this.callWatchers.req = await this.etcd.namespace(`rpc-req/${name}/`).watch().prefix('').create()
+        const reqns = this.etcd.namespace(`rpc-req/${name}/`),
+            req = this.callWatchers.req = await reqns.watch().prefix('').create()
         req.on('put', async kv => {
             const id = kv.key.toString(),
                 { name, entry, args } = JSON.parse(kv.value.toString()),
@@ -49,10 +50,11 @@ export default class EtcdMesh extends EventEmitter {
                 res.err = serializeError(err)
             }
             await this.lease.put(`rpc-res/${name}/${id}`).value(JSON.stringify(res))
-            await this.etcd.delete().key(id)
+            await reqns.delete().key(id)
         })
 
-        const res = this.callWatchers.res = await this.etcd.namespace(`rpc-res/${name}/`).watch().prefix('').create()
+        const resns = this.etcd.namespace(`rpc-res/${name}/`),
+            res = this.callWatchers.res = await resns.watch().prefix('').create()
         res.on('put', async kv => {
             const id = kv.key.toString(),
                 { err, ret } = JSON.parse(kv.value.toString())
@@ -63,7 +65,7 @@ export default class EtcdMesh extends EventEmitter {
             } else {
                 console.error(`call id "${id}" not found`)
             }
-            await this.etcd.delete().key(id)
+            await resns.delete().key(id)
         })
 
         await this.poll()
@@ -126,12 +128,12 @@ export default class EtcdMesh extends EventEmitter {
             name = this.opts.nodeName
         if (entries !== Object.keys(this.announcedEntries).sort().join(';')) {
             const value = JSON.stringify({ }),
-                promises = [ ] as any[],
-                toDel = Object.keys(this.announcedEntries).filter(entry => !this.methods[entry])
-                    .map(entry => this.etcd.delete().key(`rpc-entry/${entry}/$/${name}`)),
+                toDel = Object.keys(this.announcedEntries).filter(entry => !this.methods[entry]),
                 toPut = Object.keys(this.methods).filter(entry => !this.announcedEntries[entry])
-                    .map(entry => this.lease.put(`rpc-entry/${entry}/$/${name}`).value(value))
-            await Promise.all(promises.concat(toDel).concat(toPut))
+            await Promise.all([
+                ...toDel.map(entry => this.etcd.delete().key(`rpc-entry/${entry}/$/${name}`)) as any[],
+                ...toPut.map(entry => this.lease.put(`rpc-entry/${entry}/$/${name}`).value(value)) as any[],
+            ])
             this.announcedEntries = { ...this.methods }
         } else {
             await this.lease.grant()
@@ -140,16 +142,16 @@ export default class EtcdMesh extends EventEmitter {
 
     private entryCache = { } as { [entry: string]: { targets: any, watcher: Watcher } }
     async list(entry: string) {
-        if (!this.entryCache[entry]) {
+        let cache = this.entryCache[entry]
+        if (!cache) {
             const namespace = this.etcd.namespace(`rpc-entry/${entry}/$/`),
                 watcher = await namespace.watch().prefix('').create()
-            let targets = { } as { [key: string]: object }
-            watcher.on('connected', async () => targets = await namespace.getAll().json())
-            watcher.on('put', kv => targets[kv.key.toString()] = JSON.parse(kv.value.toString()))
-            watcher.on('delete', kv => delete targets[kv.key.toString()])
-            this.entryCache[entry] = { targets, watcher }
+            cache = this.entryCache[entry] = { targets: { } as any, watcher }
+            watcher.on('connected', async () => cache.targets = await namespace.getAll().json())
+            watcher.on('put', kv => cache.targets[kv.key.toString()] = JSON.parse(kv.value.toString()))
+            watcher.on('delete', kv => delete cache.targets[kv.key.toString()])
         }
-        return this.entryCache[entry].targets
+        return cache.targets
     }
     
     query<T extends AsyncFunctions>(api: T, opts = { } as { target?: string }) {
