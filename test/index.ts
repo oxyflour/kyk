@@ -2,17 +2,18 @@ import EtcdMesh from '../src'
 import * as assert from 'assert'
 
 const api1 = {
-    async testSimple() {
-        return 'test pass'
+    'testSimple#type': '(you: string) => string',
+    async testSimple(you: string) {
+        return 'test pass ' + you
     },
     async testThis() {
-        return 'this ' + await this.testSimple()
+        return 'this ' + await this.testSimple('this')
     },
     async testNested() {
         return [
             await this.nested.method(),
             await this.nested.nesteded.method(),
-            await this.testSimple(),
+            await this.testSimple('nested'),
         ].join(' ')
     },
     nested: {
@@ -42,19 +43,17 @@ describe('test', function() {
 
     let node1: EtcdMesh, node2: EtcdMesh
     before(async () => {
-        node1 = new EtcdMesh({ etcdOpts }, api1)
-        await new Promise(resolve => node1.once('ready', resolve))
-        node2 = new EtcdMesh({ etcdOpts }, api2)
-        await new Promise(resolve => node2.once('ready', resolve))
+        node1 = await new EtcdMesh({ etcdOpts }, api1).ready()
+        node2 = await new EtcdMesh({ etcdOpts }, api2).ready()
     })
 
     it(`simple async function`, async () => {
         const start = Date.now()
         for (const i in Array(500).fill(0)) {
-            await node2.query(api1).testSimple()
+            await node2.query(api1).testSimple('this')
         }
         console.log(`t1: ${(Date.now() - start) / 500}ms`)
-        assert.equal(await node2.query(api1).testSimple(), 'test pass')
+        assert.equal(await node2.query(api1).testSimple('this'), 'test pass this')
     })
 
     it(`this within function`, async () => {
@@ -63,7 +62,7 @@ describe('test', function() {
             await node2.query(api1).testThis()
         }
         console.log(`t2: ${(Date.now() - start) / 500}ms`)
-        assert.equal(await node2.query(api1).testThis(), 'this test pass')
+        assert.equal(await node2.query(api1).testThis(), 'this test pass this')
     })
 
     it(`nested function within object`, async () => {
@@ -72,7 +71,7 @@ describe('test', function() {
             await node2.query(api1).testNested()
         }
         console.log(`t3: ${(Date.now() - start) / 500}ms`)
-        assert.equal(await node2.query(api1).testNested(), 'nested nesteded test pass')
+        assert.equal(await node2.query(api1).testNested(), 'nested nesteded test pass nested')
     })
 
     it(`nested function within object2`, async () => {

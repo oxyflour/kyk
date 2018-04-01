@@ -7,7 +7,8 @@
   "scripts": {
     "debug": "npm run build && mocha --inspect-brk dist/test/index.js",
     "test": "mocha -r ts-node/register test/index.ts",
-    "build": "tsc"
+    "build": "pbjs test/models.proto -t static -o test/models.js && pbts test/models.js -o test/models.d.ts",
+    "build2": "pbjs test/models.proto -t json -o test/models.json && pbjs test/models.json -t proto3 -o test/models2.proto"
   },
   "keywords": [],
   "author": "",
@@ -20,10 +21,15 @@
     "mocha": "^5.0.0",
     "ts-node": "^4.1.0",
     "tslint": "^5.9.1",
-    "typescript": "^2.7.1"
+    "typescript": "^2.8.1"
   },
   "dependencies": {
+    "@types/get-port": "^3.2.0",
+    "@types/mz": "0.0.32",
     "etcd3": "^0.2.9",
+    "get-port": "^3.2.0",
+    "mz": "^2.7.0",
+    "protobufjs": "^6.8.6",
     "serialize-error": "^2.1.0"
   }
 }

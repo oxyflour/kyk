@@ -1,5 +1,5 @@
 export type AsyncFunction = (...args: any[]) => Promise<any>
-export interface AsyncFunctions { [name: string]: AsyncFunctions | AsyncFunction }
+export interface AsyncFunctions { [name: string]: AsyncFunctions | AsyncFunction | string }
 
 export interface ProxyStackItem {
     target: any,
@@ -25,6 +25,8 @@ export function wrapFunc<M extends AsyncFunctions>(
         stack = [ ] as ProxyStackItem[]) {
     if (typeof receiver === 'function') {
         return callback(...stack)
+    } else if (typeof receiver === 'string') {
+        return receiver
     } else {
         const ret = { } as any
         for (const propKey in receiver) {

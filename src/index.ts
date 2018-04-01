@@ -1,6 +1,13 @@
 import * as os from 'os'
+import * as path from 'path'
+import * as fs from 'mz/fs'
+import * as protobuf from 'protobufjs'
+
 //@ts-ignore
 import serializeError from 'serialize-error'
+
+import getPort from 'get-port'
+import grpc from 'grpc'
 import { EventEmitter } from 'events'
 import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 import { AsyncFunctions, AsyncFunction, hookFunc, wrapFunc } from './utils'
@@ -13,6 +20,92 @@ export const DEFAULT_MESH_OPTS = {
     announceInterval: 5,
     callTimeout: 5 * 60,
     destroyed: false,
+    listenPort: 3000,
+    listenAddr: '0.0.0.0',
+}
+
+export const BUILDIN_TYPES = {
+    EmptyType: { fields: { } },
+    JsonType: { fields: { json: { type: 'string', id: 1 } } },
+}
+
+export const CALLTYPE_JSON = {
+    ServiceRequest: { ...BUILDIN_TYPES.JsonType },
+    ServiceResponse: { ...BUILDIN_TYPES.JsonType },
+}
+
+export interface CallTarget {
+    host: string,
+    proto: any,
+}
+
+export interface CallTypes {
+    ServiceRequest: { [name: string]: string },
+    ServiceResponse: { result: string },
+}
+
+function parseTypes(annotation: string) {
+    const [, args, result] = annotation.match(/\(([^\)]*)\)\s*=>\s*(.*)/) || ['', '', 'EmptyType'],
+        ServiceRequest = { fields: { } } as { fields: { [name: string]: { rule?: string, type: string, id: number } } },
+        ServiceResponse = { fields: { result: { type: result, id: 1 } } },
+        pairs = args.split(',').map(pair => pair.match(/(\w+)\s*:\s*(\w+)/) || ['', '', ''])
+    let id = 1
+    for (const [, name, type] of pairs.filter(([match]) => match)) {
+        id = id + 1
+        ServiceRequest.fields[name] = { type, id }
+    }
+    return { ServiceRequest, ServiceResponse }
+}
+
+async function callService(entry: string, target: CallTarget, args: any[],
+        cache = { } as { [key: string]: grpc.Client }) {
+    const keys = entry.split('/'),
+        [srvName, funcName] = [keys.slice(0, -1).join('_') || 'root', keys.slice(-1).pop() || 'unamed'],
+        { proto, host } = target,
+        useJson = !!proto.nested.ServiceResponse.fields.json,
+        key = `${entry}/$/${host}`
+    
+    const request = { } as any
+    if (useJson) {
+        request.json = JSON.stringify(args)
+    } else {
+        Object.keys(proto.nested.ServiceRequest.fields)
+            .forEach((key, index) => request[key] = args[index])
+    }
+
+    let client = cache[key]
+    if (!client) {
+        const root = protobuf.Root.fromJSON(proto),
+            desc = grpc.loadObject(root),
+            Client = desc[srvName] as typeof grpc.Client
+        client = cache[key] = new Client(host, grpc.credentials.createInsecure())
+    }
+
+    return await new Promise<{ result: any }>((resolve, reject) => {
+        (client as any)[funcName](request, (err: Error, ret: any) => {
+            err ? reject(err) : resolve(useJson ? JSON.parse(ret.json) : ret.result)
+        })
+    })
+}
+
+function makeService(entry: string, func: (...args: any[]) => Promise<any>, all: any, types: CallTypes) {
+    const keys = entry.split('/'),
+        [srvName, funcName] = [keys.slice(0, -1).join('_') || 'root', keys.slice(-1).pop() || 'unamed'],
+        methods = { [funcName]: { requestType: 'ServiceRequest', responseType: 'ServiceResponse' } },
+        nested = { ...BUILDIN_TYPES, ...(all.nested || { }), ...types, [srvName]: { methods } },
+        proto = { ...all, nested },
+        root = protobuf.Root.fromJSON(proto),
+        desc = grpc.loadObject(root),
+        service = desc[srvName].service,
+        useJson = !!proto.nested.ServiceResponse.fields.json,
+        impl = {
+            [funcName]: (call: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {
+                func(...(useJson ? JSON.parse(call.request.json) : Object.values(call.request)))
+                    .then((result: any) => callback(null, useJson ? { json: JSON.stringify(result) } : { result }))
+                    .catch((error: any) => callback(error, undefined))
+            }
+        }
+    return { proto, service, impl }
 }
 
 export default class EtcdMesh extends EventEmitter {
@@ -20,56 +113,32 @@ export default class EtcdMesh extends EventEmitter {
     private readonly client: Etcd3
     private readonly etcd: Namespace
     private readonly lease: Lease
-
-    private calls = { } as { [id: string]: { resolve: Function, reject: Function, addedAt: number } }
-    private methods = { } as { [entry: string]: Function }
+    private readonly server: grpc.Server
 
     constructor(opts = { } as Partial<typeof DEFAULT_MESH_OPTS>, api = { } as any) {
         super()
         this.opts = { ...DEFAULT_MESH_OPTS, ...opts }
         this.client = new Etcd3(this.opts.etcdOpts)
         this.etcd = this.client.namespace(this.opts.etcdPrefix)
-        this.lease = this.etcd.lease(this.opts.etcdLease),
+        this.lease = this.etcd.lease(this.opts.etcdLease)
+        this.server = new grpc.Server()
         this.register(api)
         this.init()
     }
 
-    private callWatchers = { } as { req: Watcher, res: Watcher }
     private async init() {
-        const name = this.opts.nodeName || (this.opts.nodeName = Math.random().toString(16).slice(2, 10))
-
-        const reqns = this.etcd.namespace(`rpc-req/${name}/`),
-            req = this.callWatchers.req = await reqns.watch().prefix('').create()
-        req.on('put', async kv => {
-            const id = kv.key.toString(),
-                { name, entry, args } = JSON.parse(kv.value.toString()),
-                res = { ret: null as null | any, err: null as null | Error }
-            try {
-                res.ret = await this.onRemoteCall(name, entry, args)
-            } catch (err) {
-                res.err = Object.assign(serializeError(err), { from: this.opts.nodeName })
-            }
-            await this.lease.put(`rpc-res/${name}/${id}`).value(JSON.stringify(res))
-            await reqns.delete().key(id)
-        })
-
-        const resns = this.etcd.namespace(`rpc-res/${name}/`),
-            res = this.callWatchers.res = await resns.watch().prefix('').create()
-        res.on('put', async kv => {
-            const id = kv.key.toString(),
-                { err, ret } = JSON.parse(kv.value.toString())
-            if (this.calls[id]) {
-                const { resolve, reject } = this.calls[id]
-                err ? reject(Object.assign(new Error(), err)) : resolve(ret)
-                delete this.calls[id]
-            } else {
-                console.error(`call id "${id}" not found`)
-            }
-            await resns.delete().key(id)
-        })
-
+        const name = this.opts.nodeName || (this.opts.nodeName = Math.random().toString(16).slice(2, 10)),
+            port = this.opts.listenPort = await getPort({ port: this.opts.listenPort }),
+            credentials = grpc.ServerCredentials.createInsecure()
+        this.server.bind(`${this.opts.listenAddr}:${this.opts.listenPort}`, credentials)
+        this.server.start()
         await this.poll()
         this.emit('ready')
+    }
+
+    private onceReady = new Promise<EtcdMesh>(resolve => this.once('ready', () => resolve(this)))
+    ready() {
+        return this.onceReady
     }
 
     private pollTimeout = null as null | NodeJS.Timer
@@ -78,61 +147,29 @@ export default class EtcdMesh extends EventEmitter {
             clearTimeout(this.pollTimeout)
         }
         try {
-            await this.recycle()
             await this.announce()
         } catch (err) {
             this.emit('error', err)
         }
-        this.pollTimeout = this.opts.destroyed ? null : setTimeout(() => {
-            this.poll()
-        }, this.opts.announceInterval * 1000)
-    }
-
-    private async onRemoteCall(from: string, entry: string, args: any[]) {
-        if (this.methods[entry]) {
-            return await this.methods[entry](...args)
-        } else {
-            throw Error(`entry "${entry}" not found on node "${this.opts.nodeName}"`)
-        }
-    }
-    
-    private async doCallRemote(target: string, entry: string, args: any[]) {
-        if (target) {
-            const id = Math.random().toString(16).slice(2, 10) + '@' + os.hostname(),
-                name = this.opts.nodeName,
-                addedAt = Date.now()
-            return await new Promise(async (resolve, reject) => {
-                this.calls[id] = { resolve, reject, addedAt }
-                const req = JSON.stringify({ name, entry, args })
-                await this.lease.put(`rpc-req/${target}/${id}`).value(req)
-            })
-        } else {
-            throw Error(`no targets for entry "${target}"`)
+        if (!this.opts.destroyed) {
+            this.pollTimeout = setTimeout(() => this.poll(), this.opts.announceInterval * 1000)
         }
     }
 
-    async recycle() {
-        const timeout = Date.now() - (this.opts.destroyed ? 0 : this.opts.callTimeout * 1000)
-        for (const key in this.calls) {
-            const { addedAt, reject } = this.calls[key]
-            if (addedAt < timeout) {
-                reject(Error(`call timeout`))
-                delete this.calls[key]
-            }
-        }
-    }
-
-    private announcedEntries = { } as { [entry: string]: Function }
+    private announcedEntries = { } as { [entry: string]: any }
     async announce() {
         const entries = Object.keys(this.methods).sort().join(';'),
-            name = this.opts.nodeName
+            name = this.opts.nodeName,
+            host = `${os.hostname()}:${this.opts.listenPort}`
         if (entries !== Object.keys(this.announcedEntries).sort().join(';')) {
-            const value = JSON.stringify({ }),
-                toDel = Object.keys(this.announcedEntries).filter(entry => !this.methods[entry]),
+            const toDel = Object.keys(this.announcedEntries).filter(entry => !this.methods[entry]),
                 toPut = Object.keys(this.methods).filter(entry => !this.announcedEntries[entry])
             await Promise.all([
-                ...toDel.map(entry => this.etcd.delete().key(`rpc-entry/${entry}/$/${name}`)) as any[],
-                ...toPut.map(entry => this.lease.put(`rpc-entry/${entry}/$/${name}`).value(value)) as any[],
+                ...toDel.map(entry => this.etcd.delete()
+                    .key(`rpc-entry/${entry}/$/${name}`).exec()) as Promise<any>[],
+                ...toPut.map(entry => this.lease
+                    .put(`rpc-entry/${entry}/$/${name}`)
+                    .value(JSON.stringify({ proto: this.methods[entry].proto, host })).exec()) as Promise<any>[],
             ])
             this.announcedEntries = { ...this.methods }
         } else {
@@ -140,36 +177,53 @@ export default class EtcdMesh extends EventEmitter {
         }
     }
 
-    private entryCache = { } as { [entry: string]: { targets: any, watcher: Watcher } }
+    private entryCache = { } as { [entry: string]: { targets: { [name: string]: CallTarget }, watcher: Watcher } }
     async list(entry: string) {
         let cache = this.entryCache[entry]
         if (!cache) {
             const namespace = this.etcd.namespace(`rpc-entry/${entry}/$/`),
-                watcher = await namespace.watch().prefix('').create()
-            cache = this.entryCache[entry] = { targets: { } as any, watcher }
-            cache.targets = await namespace.getAll()
-            watcher.on('connected', async () => cache.targets = await namespace.getAll().json())
+                watcher = await namespace.watch().prefix('').create(),
+                targets = await namespace.getAll().json() as any
+            cache = this.entryCache[entry] = { targets, watcher }
+            watcher.on('connected', async () => cache.targets = await namespace.getAll().json() as any)
             watcher.on('put', kv => cache.targets[kv.key.toString()] = JSON.parse(kv.value.toString()))
             watcher.on('delete', kv => delete cache.targets[kv.key.toString()])
         }
         return cache.targets
     }
+
+    async select(entry: string) {
+        const targets = await this.list(entry)
+        return Object.values(targets).pop() // TODO
+    }
     
+    private clientCache = { } as { [key: string]: grpc.Client }
     query<T extends AsyncFunctions>(api: T, opts = { } as { target?: string }) {
-        return hookFunc(api, (...stack) => {
+        return hookFunc(api || { }, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
-                const target = opts.target || Object.keys(await this.list(entry)).pop() || ''
-                return await this.doCallRemote(target, entry, args)
+                const target = await this.select(entry)
+                if (!target) {
+                    throw Error(`no target found for entry "${entry}"`)
+                }
+                return await callService(entry, target, args, this.clientCache)
             }
         })
     }
     
-    register<T extends AsyncFunctions>(api: T) {
+    private methods = { } as { [entry: string]: { func: Function, proto: Object } }
+    register<T extends AsyncFunctions>(api: T, opts = { } as { proto?: object }) {
         return wrapFunc(api, (...stack) => {
-            const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
-                [{ receiver, target }] = stack
-            return this.methods[entry] = target.bind(receiver)
+            const keys = stack.map(({ propKey }) => propKey).reverse(),
+                entry = keys.join('/'),
+                [{ receiver, target, propKey }] = stack,
+                func = target.bind(receiver),
+                annotation = receiver[propKey + '#type'],
+                types = typeof annotation === 'string' ? parseTypes(annotation) : annotation,
+                { proto, service, impl } = makeService(entry, func, opts.proto || { }, types || { ...CALLTYPE_JSON })
+            this.methods[entry] = { func, proto }
+            this.server.addService(service, impl)
+            return func
         })
     }
 
@@ -178,13 +232,11 @@ export default class EtcdMesh extends EventEmitter {
 
         await Promise.all([
             this.lease.revoke(),
-            this.callWatchers.req.cancel(),
-            this.callWatchers.res.cancel(),
-            ... Object.values(this.entryCache).map(({ watcher }) => watcher.cancel())
-        ])
+            new Promise(resolve => this.server.tryShutdown(resolve)),
+            ... Object.values(this.entryCache).map(({ watcher }) => watcher.cancel()),
+        ] as Promise<any>[])
 
         this.client.close()
-        this.recycle()
         if (this.pollTimeout) {
             clearTimeout(this.pollTimeout)
         }
