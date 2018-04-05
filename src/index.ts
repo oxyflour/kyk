@@ -10,7 +10,9 @@ import getPort from 'get-port'
 import grpc from 'grpc'
 import { EventEmitter } from 'events'
 import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
+
 import { AsyncFunctions, AsyncFunction, hookFunc, wrapFunc } from './utils'
+import { getProtoObject } from './parser'
 
 export const DEFAULT_MESH_OPTS = {
     nodeName: '',
@@ -18,20 +20,9 @@ export const DEFAULT_MESH_OPTS = {
     etcdOpts: { } as IOptions,
     etcdLease: 10,
     announceInterval: 5,
-    callTimeout: 5 * 60,
-    destroyed: false,
     listenPort: 3000,
     listenAddr: '0.0.0.0',
-}
-
-export const BUILDIN_TYPES = {
-    EmptyType: { fields: { } },
-    JsonType: { fields: { json: { type: 'string', id: 1 } } },
-}
-
-export const CALLTYPE_JSON = {
-    ServiceRequest: { ...BUILDIN_TYPES.JsonType },
-    ServiceResponse: { ...BUILDIN_TYPES.JsonType },
+    destroyed: false,
 }
 
 export interface CallTarget {
@@ -39,70 +30,49 @@ export interface CallTarget {
     proto: any,
 }
 
-export interface CallTypes {
-    ServiceRequest: { [name: string]: string },
-    ServiceResponse: { result: string },
-}
-
-function parseTypes(annotation: string) {
-    const [, args, result] = annotation.match(/\(([^\)]*)\)\s*=>\s*(.*)/) || ['', '', 'EmptyType'],
-        ServiceRequest = { fields: { } } as { fields: { [name: string]: { rule?: string, type: string, id: number } } },
-        ServiceResponse = { fields: { result: { type: result, id: 1 } } },
-        pairs = args.split(',').map(pair => pair.match(/(\w+)\s*:\s*(\w+)/) || ['', '', ''])
-    let id = 1
-    for (const [, name, type] of pairs.filter(([match]) => match)) {
-        id = id + 1
-        ServiceRequest.fields[name] = { type, id }
-    }
-    return { ServiceRequest, ServiceResponse }
-}
-
 async function callService(entry: string, target: CallTarget, args: any[],
         cache = { } as { [key: string]: grpc.Client }) {
-    const keys = entry.split('/'),
-        [srvName, funcName] = [keys.slice(0, -1).join('_') || 'root', keys.slice(-1).pop() || 'unamed'],
-        { proto, host } = target,
-        useJson = !!proto.nested.ServiceResponse.fields.json,
-        key = `${entry}/$/${host}`
-    
-    const request = { } as any
-    if (useJson) {
-        request.json = JSON.stringify(args)
-    } else {
-        Object.keys(proto.nested.ServiceRequest.fields)
-            .forEach((key, index) => request[key] = args[index])
-    }
+    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
+        funcName = entry.split('/').pop() || '',
+        { proto, host } = target
 
-    let client = cache[key]
+    const cacheKey = `${entry}/$/${host}`
+    let client = cache[cacheKey]
     if (!client) {
         const root = protobuf.Root.fromJSON(proto),
             desc = grpc.loadObject(root),
             Client = desc[srvName] as typeof grpc.Client
-        client = cache[key] = new Client(host, grpc.credentials.createInsecure())
+        client = cache[cacheKey] = new Client(host, grpc.credentials.createInsecure())
     }
 
-    return await new Promise<{ result: any }>((resolve, reject) => {
+    const reqFields = proto.nested[`${srvName}KykReq`].fields,
+        resFields = proto.nested[`${srvName}KykRes`].fields,
+        request = resFields.json ? { json: JSON.stringify(args) } :
+            Object.keys(reqFields).reduce((req, key, index) => Object.assign(req, { [key]: args[index] }), { })
+    return await new Promise((resolve, reject) => {
         (client as any)[funcName](request, (err: Error, ret: any) => {
-            err ? reject(err) : resolve(useJson ? JSON.parse(ret.json) : ret.result)
+            err ? reject(err) : resolve(resFields.json ? JSON.parse(ret.json) : ret.result)
         })
     })
 }
 
-function makeService(entry: string, func: (...args: any[]) => Promise<any>, all: any, types: CallTypes) {
-    const keys = entry.split('/'),
-        [srvName, funcName] = [keys.slice(0, -1).join('_') || 'root', keys.slice(-1).pop() || 'unamed'],
-        methods = { [funcName]: { requestType: 'ServiceRequest', responseType: 'ServiceResponse' } },
-        nested = { ...BUILDIN_TYPES, ...(all.nested || { }), ...types, [srvName]: { methods } },
-        proto = { ...all, nested },
+const JSON_TYPE = { fields: { json: { type: 'string', id: 1 } } }
+function makeService(entry: string, func: (...args: any[]) => Promise<any>, types?: any) {
+    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
+        funcName = entry.split('/').pop() || '',
+        requestType = `${srvName}KykReq`,
+        responseType = `${srvName}KykRes`,
+        rpc = { methods: { [funcName]: { requestType, responseType } } },
+        proto = types || { nested: { [requestType]: JSON_TYPE, [responseType]: JSON_TYPE, [srvName]: rpc } },
         root = protobuf.Root.fromJSON(proto),
         desc = grpc.loadObject(root),
         service = desc[srvName].service,
-        useJson = !!proto.nested.ServiceResponse.fields.json,
+        resFields = proto.nested[responseType].fields,
         impl = {
             [funcName]: (call: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {
-                func(...(useJson ? JSON.parse(call.request.json) : Object.values(call.request)))
-                    .then((result: any) => callback(null, useJson ? { json: JSON.stringify(result) } : { result }))
-                    .catch((error: any) => callback(error, undefined))
+                func(...(resFields.json ? JSON.parse(call.request.json) : Object.values(call.request)))
+                    .then(result => callback(null, resFields.json ? { json: JSON.stringify(result) } : { result }))
+                    .catch(error => callback(error, undefined))
             }
         }
     return { proto, service, impl }
@@ -136,7 +106,9 @@ export default class EtcdMesh extends EventEmitter {
         this.emit('ready')
     }
 
-    private onceReady = new Promise<EtcdMesh>(resolve => this.once('ready', () => resolve(this)))
+    private onceReady = new Promise<EtcdMesh>((resolve, reject) => {
+        this.once('ready', () => resolve(this)).once('error', err => reject(err))
+    })
     ready() {
         return this.onceReady
     }
@@ -191,18 +163,14 @@ export default class EtcdMesh extends EventEmitter {
         }
         return cache.targets
     }
-
-    async select(entry: string) {
-        const targets = await this.list(entry)
-        return Object.values(targets).pop() // TODO
-    }
     
     private clientCache = { } as { [key: string]: grpc.Client }
     query<T extends AsyncFunctions>(api: T, opts = { } as { target?: string }) {
         return hookFunc(api || { }, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
-                const target = await this.select(entry)
+                const targets = await this.list(entry),
+                    target = Object.values(targets).pop() // TODO
                 if (!target) {
                     throw Error(`no target found for entry "${entry}"`)
                 }
@@ -212,15 +180,13 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private methods = { } as { [entry: string]: { func: Function, proto: Object } }
-    register<T extends AsyncFunctions>(api: T, opts = { } as { proto?: object }) {
+    register<T extends AsyncFunctions>(api: T) {
+        const types = api.__filename && getProtoObject(api.__filename.toString())
         return wrapFunc(api, (...stack) => {
-            const keys = stack.map(({ propKey }) => propKey).reverse(),
-                entry = keys.join('/'),
+            const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
                 [{ receiver, target, propKey }] = stack,
                 func = target.bind(receiver),
-                annotation = receiver[propKey + '#type'],
-                types = typeof annotation === 'string' ? parseTypes(annotation) : annotation,
-                { proto, service, impl } = makeService(entry, func, opts.proto || { }, types || { ...CALLTYPE_JSON })
+                { proto, service, impl } = makeService(entry, func, types)
             this.methods[entry] = { func, proto }
             this.server.addService(service, impl)
             return func
