@@ -13,8 +13,8 @@ describe('test', function() {
 
     let node1: EtcdMesh, node2: EtcdMesh
     before(async () => {
-        node1 = await new EtcdMesh({ etcdOpts }, api1).ready()
-        node2 = await new EtcdMesh({ etcdOpts }, api2).ready()
+        node1 = await new EtcdMesh({ etcdOpts }, api1).init()
+        node2 = await new EtcdMesh({ etcdOpts }, api2).init()
     })
 
     it(`simple async function`, async () => {

@@ -5,6 +5,7 @@
   "main": "./dist/src/index.js",
   "types": "./dist/src/index.d.ts",
   "scripts": {
+    "prepublish": "npm run build",
     "debug": "npm run build && mocha --inspect-brk dist/test/index.js",
     "test": "mocha -r ts-node/register test/index.ts",
     "build": "tsc"

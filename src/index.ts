@@ -92,24 +92,16 @@ export default class EtcdMesh extends EventEmitter {
         this.lease = this.etcd.lease(this.opts.etcdLease)
         this.server = new grpc.Server()
         this.register(api)
-        this.init()
     }
 
-    private async init() {
+    async init() {
         const name = this.opts.nodeName || (this.opts.nodeName = Math.random().toString(16).slice(2, 10)),
             port = this.opts.listenPort = await getPort({ port: this.opts.listenPort }),
             credentials = grpc.ServerCredentials.createInsecure()
         this.server.bind(`${this.opts.listenAddr}:${this.opts.listenPort}`, credentials)
         this.server.start()
         await this.poll()
-        this.emit('ready')
-    }
-
-    private onceReady = new Promise<EtcdMesh>((resolve, reject) => {
-        this.once('ready', () => resolve(this)).once('error', err => reject(err))
-    })
-    ready() {
-        return this.onceReady
+        return this
     }
 
     private pollTimeout = null as null | NodeJS.Timer
