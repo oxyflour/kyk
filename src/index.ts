@@ -1,6 +1,5 @@
 import * as os from 'os'
 import * as path from 'path'
-import * as fs from 'mz/fs'
 import * as protobuf from 'protobufjs'
 
 //@ts-ignore
@@ -66,7 +65,7 @@ function makeService(entry: string, func: (...args: any[]) => Promise<any>, type
         proto = types || { nested: { [requestType]: JSON_TYPE, [responseType]: JSON_TYPE, [srvName]: rpc } },
         root = protobuf.Root.fromJSON(proto),
         desc = grpc.loadObject(root),
-        service = desc[srvName].service,
+        service = (desc[srvName] as any).service,
         resFields = proto.nested[responseType].fields,
         impl = {
             [funcName]: (call: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {

@@ -25,10 +25,8 @@
   },
   "dependencies": {
     "@types/get-port": "^3.2.0",
-    "@types/mz": "0.0.32",
     "etcd3": "^0.2.9",
     "get-port": "^3.2.0",
-    "mz": "^2.7.0",
     "protobufjs": "^6.8.6",
     "serialize-error": "^2.1.0"
   }
