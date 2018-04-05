@@ -1,5 +1,4 @@
-export type AsyncFunction = (...args: any[]) => Promise<any>
-export interface AsyncFunctions { [name: string]: AsyncFunctions | AsyncFunction | string }
+export interface FunctionObject { [name: string]: FunctionObject | Function | string }
 
 export interface ProxyStackItem {
     target: any,
@@ -7,19 +6,19 @@ export interface ProxyStackItem {
     receiver: any,
 }
 
-export function hookFunc<M extends AsyncFunctions>(
+export function hookFunc<M extends FunctionObject>(
         methods: M,
         proxy: (...stack: ProxyStackItem[]) => any,
         stack = [ ] as ProxyStackItem[]): M {
     return new Proxy(methods, {
         get(target, propKey, receiver) {
             const next = [{ target, propKey, receiver }].concat(stack)
-            return hookFunc(proxy(...next) as AsyncFunctions, proxy, next)
+            return hookFunc(proxy(...next) as FunctionObject, proxy, next)
         }
     })
 }
 
-export function wrapFunc<M extends AsyncFunctions>(
+export function wrapFunc<M extends FunctionObject>(
         receiver: M,
         callback: (...stack: ProxyStackItem[]) => void,
         stack = [ ] as ProxyStackItem[]) {
@@ -32,7 +31,7 @@ export function wrapFunc<M extends AsyncFunctions>(
         for (const propKey in receiver) {
             const target = receiver[propKey],
                 next = [{ target, propKey, receiver }].concat(stack)
-            ret[propKey] = wrapFunc(target as AsyncFunctions, callback, next)
+            ret[propKey] = wrapFunc(target as FunctionObject, callback, next)
         }
         return ret
     }

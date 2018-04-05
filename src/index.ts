@@ -10,7 +10,7 @@ import grpc from 'grpc'
 import { EventEmitter } from 'events'
 import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
-import { AsyncFunctions, AsyncFunction, hookFunc, wrapFunc } from './utils'
+import { FunctionObject, hookFunc, wrapFunc } from './utils'
 import { getProtoObject } from './parser'
 
 export const DEFAULT_MESH_OPTS = {
@@ -66,15 +66,16 @@ function makeService(entry: string, func: (...args: any[]) => Promise<any>, type
         root = protobuf.Root.fromJSON(proto),
         desc = grpc.loadObject(root),
         service = (desc[srvName] as any).service,
-        resFields = proto.nested[responseType].fields,
-        impl = {
-            [funcName]: (call: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {
-                func(...(resFields.json ? JSON.parse(call.request.json) : Object.values(call.request)))
-                    .then(result => callback(null, resFields.json ? { json: JSON.stringify(result) } : { result }))
-                    .catch(error => callback(error, undefined))
-            }
+        resFields = proto.nested[responseType].fields
+    const fn = async ({ request }: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {
+        try {
+            const result = await func(...(resFields.json ? JSON.parse(request.json) : Object.values(request)))
+            callback(null, resFields.json ? { json: JSON.stringify(result) } : { result })
+        } catch (err) {
+            callback(err, undefined)
         }
-    return { proto, service, impl }
+    }
+    return { proto, service, impl: { [funcName]: fn } }
 }
 
 export default class EtcdMesh extends EventEmitter {
@@ -84,7 +85,7 @@ export default class EtcdMesh extends EventEmitter {
     private readonly lease: Lease
     private readonly server: grpc.Server
 
-    constructor(opts = { } as Partial<typeof DEFAULT_MESH_OPTS>, api = { } as any) {
+    constructor(opts = { } as Partial<typeof DEFAULT_MESH_OPTS>, api = { } as FunctionObject) {
         super()
         this.opts = { ...DEFAULT_MESH_OPTS, ...opts }
         this.client = new Etcd3(this.opts.etcdOpts)
@@ -156,7 +157,7 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private clientCache = { } as { [key: string]: grpc.Client }
-    query<T extends AsyncFunctions>(api: T, opts = { } as { target?: string }) {
+    query<T extends FunctionObject>(api: T, opts = { } as { target?: string }) {
         return hookFunc(api || { }, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
@@ -171,7 +172,7 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private methods = { } as { [entry: string]: { func: Function, proto: Object } }
-    register<T extends AsyncFunctions>(api: T) {
+    register<T extends FunctionObject>(api: T) {
         const types = api.__filename && getProtoObject(api.__filename.toString())
         return wrapFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),

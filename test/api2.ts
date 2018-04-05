@@ -6,4 +6,14 @@ export default {
     async testMap() {
         return { name: 1 } as { [name: string]: number }
     },
+    testSync() {
+        return 'x'
+    },
+    throwSomeError() {
+        if (1) {
+            throw Error(`boom`)
+        } else {
+            return 0
+        }
+    }
 }

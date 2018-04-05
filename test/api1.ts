@@ -1,4 +1,4 @@
-export default {
+export default () => ({
     __filename,
     async testSimple(you: string) {
         return 'test pass ' + you
@@ -23,4 +23,4 @@ export default {
             },
         },
     },
-}
+})

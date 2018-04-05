@@ -70,12 +70,10 @@ export function getDefaultExportType(file: string) {
                         args[symbol.escapedName.toString()] = parseExportType(type)
                     }
                 }
-                const ret = signature.getReturnType() as TypeReferenceType
-                if (ret.symbol && ret.symbol.escapedName === 'Promise' && ret.typeArguments) {
-                    return new ExportFunc(new ExportObject(args), parseExportType(ret.typeArguments[0]))
-                } else {
-                    throw Error(`only async functions supported`)
-                }
+                const returnType = signature.getReturnType() as TypeReferenceType,
+                    ret = returnType.symbol && returnType.symbol.escapedName === 'Promise' &&
+                        returnType.typeArguments ? returnType.typeArguments[0] : returnType
+                return new ExportFunc(new ExportObject(args), parseExportType(ret))
             } else {
                 throw Error(`can not parse function type ${type.flags}`)
             }
@@ -116,7 +114,7 @@ export function getProtoObject(file: string) {
         } else if (type instanceof ExportMap) {
             return proto(type.value)
         } else {
-            throw Error(`can not convert unknown type to proto`)
+            throw Error(`can not convert type ${type} to proto`)
         }
     }
 
