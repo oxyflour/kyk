@@ -7,8 +7,7 @@
   "scripts": {
     "debug": "npm run build && mocha --inspect-brk dist/test/index.js",
     "test": "mocha -r ts-node/register test/index.ts",
-    "build": "pbjs test/models.proto -t static -o test/models.js && pbts test/models.js -o test/models.d.ts",
-    "build2": "pbjs test/models.proto -t json -o test/models.json && pbjs test/models.json -t proto3 -o test/models2.proto"
+    "build": "tsc"
   },
   "keywords": [],
   "author": "",
