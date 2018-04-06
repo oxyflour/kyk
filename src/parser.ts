@@ -1,7 +1,6 @@
-import * as protobuf from 'protobufjs'
-import * as ts from 'typescript'
-import * as fs from 'fs'
 import * as path from 'path'
+import * as ts from 'typescript'
+import * as protobuf from 'protobufjs'
 
 import grpc from 'grpc'
 
@@ -10,7 +9,7 @@ interface IntrinsicType extends ts.Type { intrinsicName: string }
 interface TypeReferenceType extends ts.Type { typeArguments: ts.Type[] }
 interface UnionType extends ts.Type { types: ts.Type[] }
 
-export class ExportObject { constructor(public members: { [name: string]: ExportType }, private type = 'object') { } }
+export class ExportObject { constructor(public members: { [name: string]: { required: boolean, member: ExportType } }, private type = 'object') { } }
 export class ExportArray { constructor(public item: ExportType, private type = 'array') { } }
 export class ExportMap { constructor(public key: 'string' | 'number', public value: ExportType, private type = 'map') { } }
 export class ExportFunc { constructor(public args: ExportObject, public ret: ExportType, private type = 'function') { } }
@@ -40,8 +39,8 @@ export function getDefaultExportType(file: string) {
         throw Error(`not default export found for ${file}`)
     }
 
-    function parseExportType(type: ts.Type, stack: string[]): ExportType {
-        const next = [checker.typeToString(type)].concat(stack),
+    function parseExportType(type: ts.Type, stack: ts.Type[]): ExportType {
+        const next = [type].concat(stack),
             intrinsic = type as IntrinsicType,
             reference = type as TypeReferenceType,
             stringIndexed = type.getStringIndexType(),
@@ -64,13 +63,21 @@ export function getDefaultExportType(file: string) {
             return new ExportMap('string', parseExportType(stringIndexed, next))
         } else if ((type.flags & ts.TypeFlags.Object) && numberIndexed) {
             return new ExportMap('number', parseExportType(numberIndexed, next))
+        } else if ((type.flags & ts.TypeFlags.Object) &&
+                type.aliasSymbol && type.aliasSymbol.escapedName === 'Partial' &&
+                type.aliasTypeArguments && type.aliasTypeArguments.length === 1) {
+            const [typeArgument] = type.aliasTypeArguments
+            return parseExportType(typeArgument, next)
         } else if ((type.flags & ts.TypeFlags.Object) && symbol && symbol.members) {
             const isClass = symbol.valueDeclaration && ts.isClassLike(symbol.valueDeclaration),
-                result = { } as { [name: string]: ExportType }
+                result = { } as { [name: string]: { member: ExportType, required: boolean } },
+                [parent] = stack
             symbol.members.forEach((symbol, key) => {
                 if (symbol.valueDeclaration && (!isClass || !ts.isFunctionLike(symbol.valueDeclaration))) {
-                    const type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration)
-                    result[symbol.escapedName.toString()] = parseExportType(type, next)
+                    const type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
+                        member = parseExportType(type, next),
+                        required = !parent || !(parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial')
+                    result[symbol.escapedName.toString()] = { member, required }
                 }
             })
             return new ExportObject(result)
@@ -78,11 +85,11 @@ export function getDefaultExportType(file: string) {
             const signatures = type.getCallSignatures()
             if (signatures.length === 1) {
                 const [signature] = signatures,
-                    args = { } as { [name: string]: ExportType }
+                    args = { } as { [name: string]: { member: ExportType, required: boolean } }
                 for (const symbol of signature.parameters) {
                     if (symbol.valueDeclaration) {
                         const type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration)
-                        args[symbol.escapedName.toString()] = parseExportType(type, next)
+                        args[symbol.escapedName.toString()] = { member: parseExportType(type, next), required: true }
                     }
                 }
                 const returnType = signature.getReturnType() as TypeReferenceType
@@ -123,14 +130,14 @@ export function getProtoObject(file: string, api = { } as any) {
         } else if (type instanceof ExportObject) {
             const fields = { } as any,
                 nested = { } as any
-            for (const [index, [name, member]] of Object.entries(type.members).entries()) {
+            for (const [index, [name, { member, required }]] of Object.entries(type.members).entries()) {
                 let type = proto(member)
                 if (typeof type !== 'string') {
                     const typeName = `${name.replace(/^\w/, c => c.toUpperCase())}Type`,
                         typeBody = type
                     nested[type = typeName] = typeBody
                 }
-                const rule = member instanceof ExportArray ? 'repeated' : 'required',
+                const rule = member instanceof ExportArray ? 'repeated' : required ? 'required' : 'optional',
                     keyType = member instanceof ExportMap ? proto(member.key) : undefined
                 if (type !== 'void') {
                     fields[name] = { keyType, rule, type, id: index + 1 }
@@ -155,9 +162,9 @@ export function getProtoObject(file: string, api = { } as any) {
                 methods = { [funcName]: { requestType, responseType } }
             nested[srvName] = { methods }
             nested[requestType] = proto(type.args)
-            nested[responseType] = proto(new ExportObject({ result: type.ret }))
+            nested[responseType] = proto(new ExportObject({ result: { member: type.ret, required: true } }))
         } else if (type instanceof ExportObject) {
-            for (const [name, member] of Object.entries(type.members)) {
+            for (const [name, { member }] of Object.entries(type.members)) {
                 walk(entry + '/' + name, member)
             }
         } else if (type instanceof ExportMap) {
@@ -168,27 +175,26 @@ export function getProtoObject(file: string, api = { } as any) {
         }
     }
 
-    for (const [entry, member] of Object.entries(exportType.members)) {
+    for (const [entry, { member }] of Object.entries(exportType.members)) {
         walk(entry, member)
     }
     return { nested }
 }
 
+function makeClient(proto: any, srvName: string, host: string) {
+    const root = protobuf.Root.fromJSON(proto),
+        desc = grpc.loadObject(root),
+        Client = desc[srvName] as typeof grpc.Client
+    return new Client(host, grpc.credentials.createInsecure())
+}
+
 export async function callService(entry: string, host: string, args: any[],
         proto: any, cache = { } as { [key: string]: grpc.Client }) {
     const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
-        funcName = path.basename(entry)
-
-    const cacheKey = `${srvName}/$/${host}`
-    let client = cache[cacheKey]
-    if (!client) {
-        const root = protobuf.Root.fromJSON(proto),
-            desc = grpc.loadObject(root),
-            Client = desc[srvName] as typeof grpc.Client
-        client = cache[cacheKey] = new Client(host, grpc.credentials.createInsecure())
-    }
-
-    const reqFields = proto.nested[`${srvName}KykReq`].fields,
+        funcName = path.basename(entry),
+        cacheKey = `${srvName}/$/${host}`,
+        client = cache[cacheKey] || (cache[cacheKey] = makeClient(proto, srvName, host)),
+        reqFields = proto.nested[`${srvName}KykReq`].fields,
         resFields = proto.nested[`${srvName}KykRes`].fields,
         request = resFields.json ? { json: JSON.stringify(args) } :
             Object.keys(reqFields).reduce((req, key, index) => Object.assign(req, { [key]: args[index] }), { })
@@ -200,7 +206,6 @@ export async function callService(entry: string, host: string, args: any[],
 }
 
 const JSON_TYPE = { fields: { json: { type: 'string', id: 1 } } }
-
 export function makeService(entry: string, func: (...args: any[]) => Promise<any>, types?: any) {
     const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
         funcName = path.basename(entry),
@@ -212,7 +217,7 @@ export function makeService(entry: string, func: (...args: any[]) => Promise<any
         desc = grpc.loadObject(root),
         service = (desc[srvName] as any).service,
         resFields = proto.nested[responseType].fields
-    const fn = async ({ request }: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {
+    const fn = ({ request }: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {
         func(...(resFields.json ? JSON.parse(request.json) : Object.values(request)))
             .then(result => callback(null, resFields.json ? { json: JSON.stringify(result) } : { result }))
             .catch(error => callback(error, undefined))

@@ -1,9 +1,6 @@
-export class A_A {
-    a_a = 0
-}
-
 export class A {
-    a = new A_A()
+    a = 1
+    b = 'b'
     m() {
     }
 }
@@ -26,6 +23,6 @@ export default {
         }
     },
     async testClass(a: Partial<A>) {
-        return new A()
+        return a
     },
 }

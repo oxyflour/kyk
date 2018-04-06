@@ -66,6 +66,14 @@ describe('test', function() {
         }
     })
 
+    it(`call with partial class`, async () => {
+        assert.deepEqual(await node1.query(api2).testClass({ }), { a: 0, b: '' })
+    })
+
+    it(`call with partial class2`, async () => {
+        assert.deepEqual(await node1.query(api2).testClass({ a: 1 }), { a: 1, b: '' })
+    })
+
     after(async () => {
         await node1.destroy()
         await node2.destroy()
