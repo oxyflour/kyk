@@ -9,15 +9,16 @@ interface IntrinsicType extends ts.Type { intrinsicName: string }
 interface TypeReferenceType extends ts.Type { typeArguments: ts.Type[] }
 interface UnionType extends ts.Type { types: ts.Type[] }
 
+export interface ExportMember {
+    id: number,
+    required: boolean,
+    member: ExportType,
+    initializer?: string
+}
+
 export class ExportObject {
     constructor(
-        public members: {
-            [name: string]: {
-                required: boolean,
-                member: ExportType,
-                initializer: string | undefined
-            },
-        },
+        public members: { [name: string]: ExportMember },
         private type = 'object') { }
 }
 export class ExportArray {
@@ -94,17 +95,19 @@ export function getDefaultExportType(file: string) {
             return parseExportType(typeArgument, next)
         } else if ((type.flags & ts.TypeFlags.Object) && symbol && symbol.members) {
             const isClass = symbol.valueDeclaration && ts.isClassLike(symbol.valueDeclaration),
-                result = { } as { [name: string]: { member: ExportType, initializer: string | undefined, required: boolean } },
+                result = { } as { [name: string]: ExportMember },
                 [parent] = stack,
                 isParentPartial = parent && parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial'
+            let id = 1
             symbol.members.forEach((symbol, key) => {
                 const isFuncion = symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)
                 if (symbol.valueDeclaration && !(isClass && isFuncion)) {
                     const decl = symbol.valueDeclaration as ts.PropertyDeclaration,
                         initializer = decl.initializer && decl.initializer.getFullText(),
                         type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
-                        member = parseExportType(type, next)
-                    result[symbol.escapedName.toString()] = { member, initializer, required: !isParentPartial && !decl.questionToken }
+                        member = parseExportType(type, next),
+                        required = !isParentPartial && !decl.questionToken
+                    result[symbol.escapedName.toString()] = { id: id ++, member, initializer, required }
                 }
             })
             return new ExportObject(result)
@@ -112,14 +115,15 @@ export function getDefaultExportType(file: string) {
             const signatures = type.getCallSignatures()
             if (signatures.length === 1) {
                 const [signature] = signatures,
-                    args = { } as { [name: string]: { member: ExportType, initializer: string | undefined, required: boolean } }
-                for (const symbol of signature.parameters) {
+                    args = { } as { [name: string]: ExportMember }
+                for (const [index, symbol] of signature.parameters.entries()) {
                     if (symbol.valueDeclaration) {
                         const decl = symbol.valueDeclaration as ts.ParameterDeclaration,
                             initializer = decl.initializer && decl.initializer.getFullText(),
                             type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
-                            member = parseExportType(type, next)
-                        args[symbol.escapedName.toString()] = { member, initializer, required: !decl.questionToken }
+                            member = parseExportType(type, next),
+                            required = !decl.questionToken
+                        args[symbol.escapedName.toString()] = { id: index + 1, member, initializer, required }
                     }
                 }
                 const returnType = signature.getReturnType() as TypeReferenceType
@@ -160,7 +164,7 @@ export function getProtoObject(file: string, api = { } as any) {
         } else if (type instanceof ExportObject) {
             const fields = { } as any,
                 nested = { } as any
-            for (const [index, [name, { member, required, initializer }]] of Object.entries(type.members).entries()) {
+            for (const [index, [name, { id, member, required, initializer }]] of Object.entries(type.members).entries()) {
                 let type = proto(member)
                 if (typeof type !== 'string') {
                     const typeName = `${name.replace(/^\w/, c => c.toUpperCase())}Type`,
@@ -174,7 +178,7 @@ export function getProtoObject(file: string, api = { } as any) {
                     options.default = Function(`return ${initializer}`)()
                 }
                 if (type !== 'void') {
-                    fields[name] = { keyType, options, rule, type, id: index + 1 }
+                    fields[name] = { id, keyType, options, rule, type }
                 }
             }
             return { fields, nested }
@@ -196,7 +200,7 @@ export function getProtoObject(file: string, api = { } as any) {
                 methods = { [funcName]: { requestType, responseType } }
             nested[srvName] = { methods }
             nested[requestType] = proto(type.args)
-            nested[responseType] = proto(new ExportObject({ result: { initializer: undefined, member: type.ret, required: true } }))
+            nested[responseType] = proto(new ExportObject({ result: { id: 1, member: type.ret, required: true } }))
         } else if (type instanceof ExportObject) {
             for (const [name, { member }] of Object.entries(type.members)) {
                 walk(entry + '/' + name, member)
@@ -231,7 +235,7 @@ export async function callService(entry: string, host: string, args: any[],
         reqFields = proto.nested[`${srvName}KykReq`].fields,
         resFields = proto.nested[`${srvName}KykRes`].fields,
         request = resFields.json ? { json: JSON.stringify(args) } :
-            Object.keys(reqFields).reduce((req, key, index) => Object.assign(req, { [key]: args[index] }), { })
+            Object.keys(reqFields).reduce((req, key, index) => ({ ...req, [key]: args[index] }), { })
     return await new Promise((resolve, reject) => {
         (client as any)[funcName](request, (err: Error, ret: any) => {
             err ? reject(err) : resolve(resFields.json ? (ret.json ? JSON.parse(ret.json) : undefined) : ret.result)
