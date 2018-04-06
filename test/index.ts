@@ -69,8 +69,8 @@ describe('test', function() {
     })
 
     it(`call with partial class`, async () => {
-        assert.deepEqual(await api2.testClass({ }), { a: 2, b: 'b' })
-        assert.deepEqual(await api2.testClass({ a: 1 }), { a: 1, b: 'b' })
+        assert.deepEqual(await api2.testClass({ }), { a: 2, b: 'b', c: [ ] })
+        assert.deepEqual(await api2.testClass({ a: 1, c: ['c'] }), { a: 1, b: 'b', c: ['c'] })
     })
 
     it(`call with default parameters`, async () => {

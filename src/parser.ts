@@ -103,7 +103,7 @@ export function getDefaultExportType(file: string) {
                 const isFuncion = symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)
                 if (symbol.valueDeclaration && !(isClass && isFuncion)) {
                     const decl = symbol.valueDeclaration as ts.PropertyDeclaration,
-                        initializer = decl.initializer && decl.initializer.getFullText(),
+                        initializer = decl.initializer && ts.transpile(decl.initializer.getFullText()),
                         type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
                         member = parseExportType(type, next),
                         required = !isParentPartial && !decl.questionToken
@@ -119,7 +119,7 @@ export function getDefaultExportType(file: string) {
                 for (const [index, symbol] of signature.parameters.entries()) {
                     if (symbol.valueDeclaration) {
                         const decl = symbol.valueDeclaration as ts.ParameterDeclaration,
-                            initializer = decl.initializer && decl.initializer.getFullText(),
+                            initializer = decl.initializer && ts.transpile(decl.initializer.getFullText()),
                             type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
                             member = parseExportType(type, next),
                             required = !decl.questionToken

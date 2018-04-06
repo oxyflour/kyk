@@ -1,6 +1,9 @@
 export class A {
     a = 1 + 1
     b = 'b'
+    c = [ ] as string[]
+    // TODO: the following initilizer is not supported
+    // c = ['c'] as string[]
     m() {
     }
 }
