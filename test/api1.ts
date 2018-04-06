@@ -3,7 +3,7 @@ export default (id = 'xx') => ({
     map: {
         [id]: {
             async ok() {
-                return 'ok'
+                return id + ' ok'
             }
         }
     },

@@ -81,7 +81,7 @@ export default class EtcdMesh extends EventEmitter {
                 ...toDel.map(entry => this.etcd.delete()
                     .key(`rpc-entry/${entry}/$/${name}`).exec()) as Promise<any>[],
                 ...toPut.map(entry => this.lease.put(`rpc-entry/${entry}/$/${name}`)
-                    .value(JSON.stringify({ host })).exec()) as Promise<any>[],
+                    .value(JSON.stringify({ host } as CallTarget)).exec()) as Promise<any>[],
                 ...toPut.map(entry => this.lease.put(`rpc-proto/${entry}/$/${name}`)
                     .value(JSON.stringify(this.methods[entry].proto)).exec()) as Promise<any>[],
             ])

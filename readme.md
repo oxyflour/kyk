@@ -1,12 +1,12 @@
 # KyokoMesh
-simple and stupid FAAS service mesh
+Write grpc microservices in typescript. Just for fun, Don't use.
 
 ## Example
+api.ts
 ```typescript
-import KyokoMesh from 'kyoko-mesh'
-
 // define your async functions as service here
 const api = {
+    __filename, // add this line so that we can find this module and use grpc
     async hello() {
         // you can use `this` to reference other async functions
         return 'my ' + await this.faas.server()
@@ -18,18 +18,20 @@ const api = {
         },
     },
 }
+```
+
+main.ts
+```typescript
+import KyokoMesh from 'kyoko-mesh'
+import API from './api'
 
 async function start() {
-    const
-        // server provide api
-        server = new KyokoMesh({ }, api)
-        // client use it with client.query(api)
+    const server = new KyokoMesh({ }, API)
         client = new KyokoMesh()
-    await Promise.all([server, client].map(node => {
-        return new Promise(resolve => node.once('ready', resolve))
-    }))
+    await Promise.all([server.init(), client.init()])
 
-    console.log('hello ' + await client.query(api).hello())
+    const api = client.query(API)
+    console.log('hello ' + await api.hello())
 }
 
 start()
