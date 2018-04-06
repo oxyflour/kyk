@@ -1,6 +1,5 @@
 import * as os from 'os'
 import * as path from 'path'
-import * as protobuf from 'protobufjs'
 
 //@ts-ignore
 import serializeError from 'serialize-error'
@@ -11,7 +10,7 @@ import { EventEmitter } from 'events'
 import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
 import { FunctionObject, hookFunc, wrapFunc } from './utils'
-import { getProtoObject } from './parser'
+import { makeService, callService, getProtoObject } from './parser'
 
 export const DEFAULT_MESH_OPTS = {
     nodeName: '',
@@ -26,56 +25,6 @@ export const DEFAULT_MESH_OPTS = {
 
 export interface CallTarget {
     host: string,
-    proto: any,
-}
-
-async function callService(entry: string, target: CallTarget, args: any[],
-        cache = { } as { [key: string]: grpc.Client }) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
-        funcName = entry.split('/').pop() || '',
-        { proto, host } = target
-
-    const cacheKey = `${entry}/$/${host}`
-    let client = cache[cacheKey]
-    if (!client) {
-        const root = protobuf.Root.fromJSON(proto),
-            desc = grpc.loadObject(root),
-            Client = desc[srvName] as typeof grpc.Client
-        client = cache[cacheKey] = new Client(host, grpc.credentials.createInsecure())
-    }
-
-    const reqFields = proto.nested[`${srvName}KykReq`].fields,
-        resFields = proto.nested[`${srvName}KykRes`].fields,
-        request = resFields.json ? { json: JSON.stringify(args) } :
-            Object.keys(reqFields).reduce((req, key, index) => Object.assign(req, { [key]: args[index] }), { })
-    return await new Promise((resolve, reject) => {
-        (client as any)[funcName](request, (err: Error, ret: any) => {
-            err ? reject(err) : resolve(resFields.json ? JSON.parse(ret.json) : ret.result)
-        })
-    })
-}
-
-const JSON_TYPE = { fields: { json: { type: 'string', id: 1 } } }
-function makeService(entry: string, func: (...args: any[]) => Promise<any>, types?: any) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
-        funcName = entry.split('/').pop() || '',
-        requestType = `${srvName}KykReq`,
-        responseType = `${srvName}KykRes`,
-        rpc = { methods: { [funcName]: { requestType, responseType } } },
-        proto = types || { nested: { [requestType]: JSON_TYPE, [responseType]: JSON_TYPE, [srvName]: rpc } },
-        root = protobuf.Root.fromJSON(proto),
-        desc = grpc.loadObject(root),
-        service = (desc[srvName] as any).service,
-        resFields = proto.nested[responseType].fields
-    const fn = async ({ request }: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {
-        try {
-            const result = await func(...(resFields.json ? JSON.parse(request.json) : Object.values(request)))
-            callback(null, resFields.json ? { json: JSON.stringify(result) } : { result })
-        } catch (err) {
-            callback(err, undefined)
-        }
-    }
-    return { proto, service, impl: { [funcName]: fn } }
 }
 
 export default class EtcdMesh extends EventEmitter {
@@ -131,49 +80,41 @@ export default class EtcdMesh extends EventEmitter {
             await Promise.all([
                 ...toDel.map(entry => this.etcd.delete()
                     .key(`rpc-entry/${entry}/$/${name}`).exec()) as Promise<any>[],
-                ...toPut.map(entry => this.lease
-                    .put(`rpc-entry/${entry}/$/${name}`)
-                    .value(JSON.stringify({ proto: this.methods[entry].proto, host })).exec()) as Promise<any>[],
+                ...toPut.map(entry => this.lease.put(`rpc-entry/${entry}/$/${name}`)
+                    .value(JSON.stringify({ host })).exec()) as Promise<any>[],
+                ...toPut.map(entry => this.lease.put(`rpc-proto/${entry}/$/${name}`)
+                    .value(JSON.stringify(this.methods[entry].proto)).exec()) as Promise<any>[],
             ])
             this.announcedEntries = { ...this.methods }
         } else {
             await this.lease.grant()
         }
     }
-
-    private entryCache = { } as { [entry: string]: { targets: { [name: string]: CallTarget }, watcher: Watcher } }
-    async list(entry: string) {
-        let cache = this.entryCache[entry]
-        if (!cache) {
-            const namespace = this.etcd.namespace(`rpc-entry/${entry}/$/`),
-                watcher = await namespace.watch().prefix('').create(),
-                targets = await namespace.getAll().json() as any
-            cache = this.entryCache[entry] = { targets, watcher }
-            watcher.on('connected', async () => cache.targets = await namespace.getAll().json() as any)
-            watcher.on('put', kv => cache.targets[kv.key.toString()] = JSON.parse(kv.value.toString()))
-            watcher.on('delete', kv => delete cache.targets[kv.key.toString()])
-        }
-        return cache.targets
-    }
     
     private clientCache = { } as { [key: string]: grpc.Client }
+    private protoCache = { } as { [key: string]: any }
     query<T extends FunctionObject>(api: T, opts = { } as { target?: string }) {
         return hookFunc(api || { }, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
-                const targets = await this.list(entry),
-                    target = Object.values(targets).pop() // TODO
+                const targets = await this.etcd.namespace(`rpc-entry/${entry}/$/`).getAll().json(),
+                    [target] = Object.entries(targets as { [name: string]: CallTarget })
                 if (!target) {
                     throw Error(`no target found for entry "${entry}"`)
                 }
-                return await callService(entry, target, args, this.clientCache)
+                const [name, { host }] = target
+                let proto = this.protoCache[entry]
+                if (!proto) {
+                    proto = this.protoCache[entry] = await this.etcd.get(`rpc-proto/${entry}/$/${name}`).json()
+                }
+                return await callService(entry, host, args, proto, this.clientCache)
             }
         })
     }
     
     private methods = { } as { [entry: string]: { func: Function, proto: Object } }
     register<T extends FunctionObject>(api: T) {
-        const types = api.__filename && getProtoObject(api.__filename.toString())
+        const types = api.__filename && getProtoObject(api.__filename.toString(), api)
         return wrapFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
                 [{ receiver, target, propKey }] = stack,
@@ -191,7 +132,6 @@ export default class EtcdMesh extends EventEmitter {
         await Promise.all([
             this.lease.revoke(),
             new Promise(resolve => this.server.tryShutdown(resolve)),
-            ... Object.values(this.entryCache).map(({ watcher }) => watcher.cancel()),
         ] as Promise<any>[])
 
         this.client.close()

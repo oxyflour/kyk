@@ -1,5 +1,12 @@
-export default () => ({
+export default (id = 'xx') => ({
     __filename,
+    map: {
+        [id]: {
+            async ok() {
+                return 'ok'
+            }
+        }
+    },
     async testSimple(you: string) {
         return 'test pass ' + you
     },

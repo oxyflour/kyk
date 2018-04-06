@@ -4,19 +4,18 @@ import EtcdMesh from '../src'
 import API1 from './api1'
 import api2 from './api2'
 
-const etcdOpts = {
-    hosts: 'http://localhost:2379',
-}
+const etcdOpts = { hosts: 'http://localhost:2379' },
+    opts = { etcdOpts }
 
 describe('test', function() {
     this.timeout(30000)
 
     let node1: EtcdMesh, node2: EtcdMesh
 
-    const api1 = API1()
+    const api1 = API1('node1')
     before(async () => {
-        node1 = await new EtcdMesh({ etcdOpts }, api1).init()
-        node2 = await new EtcdMesh({ etcdOpts }, api2).init()
+        node1 = await new EtcdMesh(opts, api1).init()
+        node2 = await new EtcdMesh(opts, api2).init()
     })
 
     it(`simple async function`, async () => {
@@ -35,6 +34,10 @@ describe('test', function() {
         assert.equal(await node2.query(api1).nested.method(), 'nested')
     })
 
+    it(`call indiced function`, async () => {
+        assert.equal(await node2.query(api1).map['node1'].ok(), 'ok')
+    })
+
     it(`call with array`, async () => {
         assert.deepEqual(await node1.query(api2).testArray([5]), [6])
     })
@@ -51,8 +54,8 @@ describe('test', function() {
         assert.deepEqual(await node1.query(api2).testMap(), { name: 1 })
     })
 
-    it(`call without async`, async () => {
-        assert.deepEqual(await node1.query(api2).testSync(), 'x')
+    it(`call with void`, async () => {
+        assert.equal(await node1.query(api2).testVoid(), undefined)
     })
 
     it(`call with exception`, async () => {
