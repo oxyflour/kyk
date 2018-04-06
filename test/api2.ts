@@ -1,5 +1,5 @@
 export class A {
-    a = 1
+    a = 1 + 1
     b = 'b'
     m() {
     }
@@ -24,5 +24,8 @@ export default {
     },
     async testClass(a: Partial<A>) {
         return a
+    },
+    async testDefaultParameters(a: number, b = 'x') {
+        return a + b
     },
 }

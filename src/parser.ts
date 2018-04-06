@@ -9,10 +9,34 @@ interface IntrinsicType extends ts.Type { intrinsicName: string }
 interface TypeReferenceType extends ts.Type { typeArguments: ts.Type[] }
 interface UnionType extends ts.Type { types: ts.Type[] }
 
-export class ExportObject { constructor(public members: { [name: string]: { required: boolean, member: ExportType } }, private type = 'object') { } }
-export class ExportArray { constructor(public item: ExportType, private type = 'array') { } }
-export class ExportMap { constructor(public key: 'string' | 'number', public value: ExportType, private type = 'map') { } }
-export class ExportFunc { constructor(public args: ExportObject, public ret: ExportType, private type = 'function') { } }
+export class ExportObject {
+    constructor(
+        public members: {
+            [name: string]: {
+                required: boolean,
+                member: ExportType,
+                initializer: string | undefined
+            },
+        },
+        private type = 'object') { }
+}
+export class ExportArray {
+    constructor(
+        public item: ExportType,
+        private type = 'array') { }
+}
+export class ExportMap {
+    constructor(
+        public key: 'string' | 'number',
+        public value: ExportType,
+        private type = 'map') { }
+}
+export class ExportFunc {
+    constructor(
+        public args: ExportObject,
+        public ret: ExportType,
+        private type = 'function') { }
+}
 export type ExportType = string | ExportFunc | ExportObject | ExportArray | ExportMap
 
 const RENAME_TYPES = {
@@ -50,14 +74,14 @@ export function getDefaultExportType(file: string) {
             if (intrinsic.intrinsicName !== 'unknown') {
                 return intrinsic.intrinsicName
             } else {
-                throw Error(`unknown type ${next.join('\nin ')}`)
+                throw Error(`unknown type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
             }
         } else if (symbol && symbol.escapedName === 'Array' && reference.typeArguments) {
             if (reference.typeArguments.length === 1) {
                 const [argument] = reference.typeArguments
                 return new ExportArray(parseExportType(argument, next))
             } else {
-                throw Error(`array of types ${reference.typeArguments} not supported, type ${next.join('\nin ')}`)
+                throw Error(`array of types ${reference.typeArguments} not supported, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
             }
         } else if ((type.flags & ts.TypeFlags.Object) && stringIndexed) {
             return new ExportMap('string', parseExportType(stringIndexed, next))
@@ -70,14 +94,17 @@ export function getDefaultExportType(file: string) {
             return parseExportType(typeArgument, next)
         } else if ((type.flags & ts.TypeFlags.Object) && symbol && symbol.members) {
             const isClass = symbol.valueDeclaration && ts.isClassLike(symbol.valueDeclaration),
-                result = { } as { [name: string]: { member: ExportType, required: boolean } },
-                [parent] = stack
+                result = { } as { [name: string]: { member: ExportType, initializer: string | undefined, required: boolean } },
+                [parent] = stack,
+                isParentPartial = parent && parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial'
             symbol.members.forEach((symbol, key) => {
-                if (symbol.valueDeclaration && (!isClass || !ts.isFunctionLike(symbol.valueDeclaration))) {
-                    const type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
-                        member = parseExportType(type, next),
-                        required = !parent || !(parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial')
-                    result[symbol.escapedName.toString()] = { member, required }
+                const isFuncion = symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)
+                if (symbol.valueDeclaration && !(isClass && isFuncion)) {
+                    const decl = symbol.valueDeclaration as ts.PropertyDeclaration,
+                        initializer = decl.initializer && decl.initializer.getFullText(),
+                        type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
+                        member = parseExportType(type, next)
+                    result[symbol.escapedName.toString()] = { member, initializer, required: !isParentPartial && !decl.questionToken }
                 }
             })
             return new ExportObject(result)
@@ -85,11 +112,14 @@ export function getDefaultExportType(file: string) {
             const signatures = type.getCallSignatures()
             if (signatures.length === 1) {
                 const [signature] = signatures,
-                    args = { } as { [name: string]: { member: ExportType, required: boolean } }
+                    args = { } as { [name: string]: { member: ExportType, initializer: string | undefined, required: boolean } }
                 for (const symbol of signature.parameters) {
                     if (symbol.valueDeclaration) {
-                        const type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration)
-                        args[symbol.escapedName.toString()] = { member: parseExportType(type, next), required: true }
+                        const decl = symbol.valueDeclaration as ts.ParameterDeclaration,
+                            initializer = decl.initializer && decl.initializer.getFullText(),
+                            type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
+                            member = parseExportType(type, next)
+                        args[symbol.escapedName.toString()] = { member, initializer, required: !decl.questionToken }
                     }
                 }
                 const returnType = signature.getReturnType() as TypeReferenceType
@@ -97,13 +127,13 @@ export function getDefaultExportType(file: string) {
                     const [argument] = returnType.typeArguments
                     return new ExportFunc(new ExportObject(args), parseExportType(argument, next))
                 } else {
-                    throw Error(`return value is not an async function, type ${next.join('\nin ')}`)
+                    throw Error(`return value is not an async function, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
                 }
             } else {
-                throw Error(`can not parse function type ${next.join('\nin ')}`)
+                throw Error(`can not parse function type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
             }
         } else {
-            throw Error(`can not parse type "${next.join('\nin ')}"`)
+            throw Error(`can not parse type "${next.map(type => checker.typeToString(type)).join('\nin ')}"`)
         }
     }
 
@@ -130,7 +160,7 @@ export function getProtoObject(file: string, api = { } as any) {
         } else if (type instanceof ExportObject) {
             const fields = { } as any,
                 nested = { } as any
-            for (const [index, [name, { member, required }]] of Object.entries(type.members).entries()) {
+            for (const [index, [name, { member, required, initializer }]] of Object.entries(type.members).entries()) {
                 let type = proto(member)
                 if (typeof type !== 'string') {
                     const typeName = `${name.replace(/^\w/, c => c.toUpperCase())}Type`,
@@ -138,9 +168,13 @@ export function getProtoObject(file: string, api = { } as any) {
                     nested[type = typeName] = typeBody
                 }
                 const rule = member instanceof ExportArray ? 'repeated' : required ? 'required' : 'optional',
-                    keyType = member instanceof ExportMap ? proto(member.key) : undefined
+                    keyType = member instanceof ExportMap ? proto(member.key) : undefined,
+                    options = { } as any
+                if (initializer) {
+                    options.default = Function(`return ${initializer}`)()
+                }
                 if (type !== 'void') {
-                    fields[name] = { keyType, rule, type, id: index + 1 }
+                    fields[name] = { keyType, options, rule, type, id: index + 1 }
                 }
             }
             return { fields, nested }
@@ -155,14 +189,14 @@ export function getProtoObject(file: string, api = { } as any) {
 
     function walk(entry: string, type: ExportType) {
         if (type instanceof ExportFunc) {
-            const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
+            const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
                 funcName = path.basename(entry),
                 requestType = `${srvName}KykReq`,
                 responseType = `${srvName}KykRes`,
                 methods = { [funcName]: { requestType, responseType } }
             nested[srvName] = { methods }
             nested[requestType] = proto(type.args)
-            nested[responseType] = proto(new ExportObject({ result: { member: type.ret, required: true } }))
+            nested[responseType] = proto(new ExportObject({ result: { initializer: undefined, member: type.ret, required: true } }))
         } else if (type instanceof ExportObject) {
             for (const [name, { member }] of Object.entries(type.members)) {
                 walk(entry + '/' + name, member)
@@ -190,7 +224,7 @@ function makeClient(proto: any, srvName: string, host: string) {
 
 export async function callService(entry: string, host: string, args: any[],
         proto: any, cache = { } as { [key: string]: grpc.Client }) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
+    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
         funcName = path.basename(entry),
         cacheKey = `${srvName}/$/${host}`,
         client = cache[cacheKey] || (cache[cacheKey] = makeClient(proto, srvName, host)),
@@ -200,14 +234,14 @@ export async function callService(entry: string, host: string, args: any[],
             Object.keys(reqFields).reduce((req, key, index) => Object.assign(req, { [key]: args[index] }), { })
     return await new Promise((resolve, reject) => {
         (client as any)[funcName](request, (err: Error, ret: any) => {
-            err ? reject(err) : resolve(resFields.json ? JSON.parse(ret.json) : ret.result)
+            err ? reject(err) : resolve(resFields.json ? (ret.json ? JSON.parse(ret.json) : undefined) : ret.result)
         })
     })
 }
 
 const JSON_TYPE = { fields: { json: { type: 'string', id: 1 } } }
 export function makeService(entry: string, func: (...args: any[]) => Promise<any>, types?: any) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()),
+    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
         funcName = path.basename(entry),
         requestType = `${srvName}KykReq`,
         responseType = `${srvName}KykRes`,

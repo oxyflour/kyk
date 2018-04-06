@@ -67,11 +67,13 @@ describe('test', function() {
     })
 
     it(`call with partial class`, async () => {
-        assert.deepEqual(await node1.query(api2).testClass({ }), { a: 0, b: '' })
+        assert.deepEqual(await node1.query(api2).testClass({ }), { a: 2, b: 'b' })
+        assert.deepEqual(await node1.query(api2).testClass({ a: 1 }), { a: 1, b: 'b' })
     })
 
-    it(`call with partial class2`, async () => {
-        assert.deepEqual(await node1.query(api2).testClass({ a: 1 }), { a: 1, b: '' })
+    it(`call with default parameters`, async () => {
+        assert.equal(await node1.query(api2).testDefaultParameters(1), '1x')
+        assert.equal(await node1.query(api2).testDefaultParameters(1, 'y'), '1y')
     })
 
     after(async () => {
