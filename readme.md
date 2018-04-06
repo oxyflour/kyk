@@ -4,8 +4,8 @@ Write grpc microservices in typescript. Just for fun, Don't use.
 ## Example
 api.ts
 ```typescript
-// define your async functions as service here
-const api = {
+// define your async functions as service here, a default keyword is required
+export default {
     __filename, // add this line so that we can find this module and use grpc
     async hello() {
         // you can use `this` to reference other async functions
