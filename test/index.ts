@@ -81,7 +81,5 @@ describe('test', function() {
     after(async () => {
         await node1.destroy()
         await node2.destroy()
-        // FIXME:
-        setTimeout(() => process.exit(0), 2000)
     })
 })

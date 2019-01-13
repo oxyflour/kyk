@@ -250,7 +250,7 @@ export function makeService(entry: string, func: (...args: any[]) => Promise<any
         desc = grpc.loadObject(root),
         service = (desc[srvName] as any).service,
         resFields = proto.nested[responseType].fields
-    const fn = ({ request }: grpc.ServerUnaryCall, callback: grpc.sendUnaryData) => {
+    const fn = ({ request }: grpc.ServerUnaryCall<any>, callback: grpc.sendUnaryData<any>) => {
         func(...(resFields.json ? JSON.parse(request.json) : Object.values(request)))
             .then(result => callback(null, resFields.json ? { json: JSON.stringify(result) } : { result }))
             .catch(error => callback(error, undefined))

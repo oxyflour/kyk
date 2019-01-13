@@ -17,9 +17,8 @@ export const DEFAULT_MESH_OPTS = {
     etcdOpts: { } as IOptions,
     etcdLease: 10,
     announceInterval: 5,
-    listenPort: 3000,
+    listenPort: 0,
     listenAddr: '0.0.0.0',
-    destroyed: false,
 }
 
 export interface CallTarget {
@@ -43,28 +42,39 @@ export default class EtcdMesh extends EventEmitter {
         this.register(api)
     }
 
+    get started() {
+        return !!this.pollTimer
+    }
+
     async init() {
+        if (this.started) {
+            throw Error('already started')
+        }
+
         this.opts.nodeName = this.opts.nodeName || Math.random().toString(16).slice(2, 10)
         this.opts.listenPort = this.opts.listenPort || await getPort({ port: this.opts.listenPort })
+
         const credentials = grpc.ServerCredentials.createInsecure()
         this.server.bind(`${this.opts.listenAddr}:${this.opts.listenPort}`, credentials)
         this.server.start()
+
+        this.pollTimer = setTimeout(() => { }, 0)
         await this.poll()
         return this
     }
 
-    private pollTimeout = null as null | NodeJS.Timer
+    private pollTimer = null as null | NodeJS.Timer
     private async poll() {
-        if (this.pollTimeout) {
-            clearTimeout(this.pollTimeout)
+        if (this.pollTimer) {
+            clearTimeout(this.pollTimer)
         }
         try {
             await this.announce()
         } catch (err) {
             this.emit('error', err)
         }
-        if (!this.opts.destroyed) {
-            this.pollTimeout = setTimeout(() => this.poll(), this.opts.announceInterval * 1000)
+        if (this.pollTimer) {
+            this.pollTimer = setTimeout(() => this.poll(), this.opts.announceInterval * 1000)
         }
     }
 
@@ -125,17 +135,21 @@ export default class EtcdMesh extends EventEmitter {
         })
     }
 
-    async destroy() {
-        this.opts.destroyed = true
+    async destroy(waiting = 5) {
+        if (!this.started) {
+            throw Error('not started')
+        }
 
+        setTimeout(() => this.server.forceShutdown(), waiting * 1000)
         await Promise.all([
             this.lease.revoke(),
             new Promise(resolve => this.server.tryShutdown(resolve)),
         ] as Promise<any>[])
 
         this.client.close()
-        if (this.pollTimeout) {
-            clearTimeout(this.pollTimeout)
+        if (this.pollTimer) {
+            clearTimeout(this.pollTimer)
         }
+        this.pollTimer = null
     }
 }

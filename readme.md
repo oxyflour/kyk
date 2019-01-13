@@ -1,6 +1,11 @@
 # KyokoMesh
 Write grpc microservices in typescript. Just for fun, Don't use.
 
+Note: Installing grpc over proxy may fail beacuse of `needle` issue. Add the following line to your `.npmrc` file
+```
+grpc_node_binary_host_mirror=https://npm.taobao.org/mirrors
+```
+
 ## Example
 api.ts
 ```typescript
