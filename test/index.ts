@@ -79,7 +79,6 @@ describe('test', function() {
     })
 
     after(async () => {
-        await node1.destroy()
-        await node2.destroy()
+        await Promise.all([node1.destroy(), node2.destroy()])
     })
 })
