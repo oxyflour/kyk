@@ -7,7 +7,6 @@ import grpc from 'grpc'
 // FIXME: internal in typescript
 interface IntrinsicType extends ts.Type { intrinsicName: string }
 interface TypeReferenceType extends ts.Type { typeArguments: ts.Type[] }
-interface UnionType extends ts.Type { types: ts.Type[] }
 
 export interface ExportMember {
     id: number,
@@ -18,25 +17,21 @@ export interface ExportMember {
 
 export class ExportObject {
     constructor(
-        public members: { [name: string]: ExportMember },
-        private type = 'object') { }
+        public members: { [name: string]: ExportMember }) { }
 }
 export class ExportArray {
     constructor(
-        public item: ExportType,
-        private type = 'array') { }
+        public item: ExportType) { }
 }
 export class ExportMap {
     constructor(
         public key: 'string' | 'number',
-        public value: ExportType,
-        private type = 'map') { }
+        public value: ExportType) { }
 }
 export class ExportFunc {
     constructor(
         public args: ExportObject,
-        public ret: ExportType,
-        private type = 'function') { }
+        public ret: ExportType) { }
 }
 export type ExportType = string | ExportFunc | ExportObject | ExportArray | ExportMap
 
@@ -99,7 +94,7 @@ export function getDefaultExportType(file: string) {
                 [parent] = stack,
                 isParentPartial = parent && parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial'
             let id = 1
-            symbol.members.forEach((symbol, key) => {
+            symbol.members.forEach(symbol => {
                 const isFuncion = symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)
                 if (symbol.valueDeclaration && !(isClass && isFuncion)) {
                     const decl = symbol.valueDeclaration as ts.PropertyDeclaration,
@@ -164,7 +159,7 @@ export function getProtoObject(file: string, api = { } as any) {
         } else if (type instanceof ExportObject) {
             const fields = { } as any,
                 nested = { } as any
-            for (const [index, [name, { id, member, required, initializer }]] of Object.entries(type.members).entries()) {
+            for (const [name, { id, member, required, initializer }] of Object.entries(type.members)) {
                 let type = proto(member)
                 if (typeof type !== 'string') {
                     const typeName = `${name.replace(/^\w/, c => c.toUpperCase())}Type`,

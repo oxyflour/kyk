@@ -1,5 +1,4 @@
 import * as os from 'os'
-import * as path from 'path'
 
 //@ts-ignore
 import serializeError from 'serialize-error'
@@ -7,7 +6,7 @@ import serializeError from 'serialize-error'
 import getPort from 'get-port'
 import grpc from 'grpc'
 import { EventEmitter } from 'events'
-import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
+import { Etcd3, Namespace, Lease, IOptions } from 'etcd3'
 
 import { FunctionObject, hookFunc, wrapFunc } from './utils'
 import { makeService, callService, getProtoObject } from './parser'
@@ -45,9 +44,9 @@ export default class EtcdMesh extends EventEmitter {
     }
 
     async init() {
-        const name = this.opts.nodeName || (this.opts.nodeName = Math.random().toString(16).slice(2, 10)),
-            port = this.opts.listenPort = await getPort({ port: this.opts.listenPort }),
-            credentials = grpc.ServerCredentials.createInsecure()
+        this.opts.nodeName = this.opts.nodeName || Math.random().toString(16).slice(2, 10)
+        this.opts.listenPort = this.opts.listenPort || await getPort({ port: this.opts.listenPort })
+        const credentials = grpc.ServerCredentials.createInsecure()
         this.server.bind(`${this.opts.listenAddr}:${this.opts.listenPort}`, credentials)
         this.server.start()
         await this.poll()
@@ -93,8 +92,8 @@ export default class EtcdMesh extends EventEmitter {
     
     private clientCache = { } as { [key: string]: grpc.Client }
     private protoCache = { } as { [key: string]: any }
-    query<T extends FunctionObject>(api: T, opts = { } as { target?: string }) {
-        return hookFunc(api || { }, (...stack) => {
+    query<T extends FunctionObject>(api = { } as T) {
+        return hookFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
                 const targets = await this.etcd.namespace(`rpc-entry/${entry}/$/`).getAll().json(),
@@ -117,7 +116,7 @@ export default class EtcdMesh extends EventEmitter {
         const types = api.__filename && getProtoObject(api.__filename.toString(), api)
         return wrapFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
-                [{ receiver, target, propKey }] = stack,
+                [{ receiver, target }] = stack,
                 func = target.bind(receiver),
                 { proto, service, impl } = makeService(entry, func, types)
             this.methods[entry] = { func, proto }
