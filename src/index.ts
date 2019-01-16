@@ -1,14 +1,12 @@
 import * as os from 'os'
-
-//@ts-ignore
-import serializeError from 'serialize-error'
-
 import getPort from 'get-port'
-import grpc from 'grpc'
+import grpc, { KeyCertPair, ServerCredentials } from 'grpc'
 import { EventEmitter } from 'events'
-import { Etcd3, Namespace, Lease, IOptions } from 'etcd3'
+import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
-import { FunctionObject, hookFunc, wrapFunc } from './utils'
+import weightedRandom = require('weighted-random')
+
+import { FunctionObject, hookFunc, wrapFunc, md5, callWithRetry } from './utils'
 import { makeService, callService, getProtoObject } from './parser'
 
 export const DEFAULT_MESH_OPTS = {
@@ -17,16 +15,29 @@ export const DEFAULT_MESH_OPTS = {
     etcdOpts: { } as IOptions,
     etcdLease: 10,
     announceInterval: 5,
+    grpcOpts: { } as {
+        rootCerts: Buffer | null,
+        keyCertPairs?: KeyCertPair[],
+        checkClientCertificate?: boolean,
+    },
     listenPort: 0,
     listenAddr: '0.0.0.0',
 }
 
 export interface CallTarget {
-    host: string,
+    host: string
+    hash: string
+    weight?: number
+}
+
+export interface CallEntry {
+    targets: Promise<{ [name: string]: CallTarget }>,
+    watcher: Promise<Watcher>,
+    lastaccess: number,
 }
 
 export default class EtcdMesh extends EventEmitter {
-    private readonly opts: typeof DEFAULT_MESH_OPTS
+    readonly opts: typeof DEFAULT_MESH_OPTS
     private readonly client: Etcd3
     private readonly etcd: Namespace
     private readonly lease: Lease
@@ -54,7 +65,10 @@ export default class EtcdMesh extends EventEmitter {
         this.opts.nodeName = this.opts.nodeName || Math.random().toString(16).slice(2, 10)
         this.opts.listenPort = this.opts.listenPort || await getPort({ port: this.opts.listenPort })
 
-        const credentials = grpc.ServerCredentials.createInsecure()
+        const { rootCerts, keyCertPairs, checkClientCertificate } = this.opts.grpcOpts,
+            credentials = keyCertPairs ?
+                ServerCredentials.createSsl(rootCerts, keyCertPairs, checkClientCertificate) :
+                ServerCredentials.createInsecure()
         this.server.bind(`${this.opts.listenAddr}:${this.opts.listenPort}`, credentials)
         this.server.start()
 
@@ -85,67 +99,96 @@ export default class EtcdMesh extends EventEmitter {
             host = `${os.hostname()}:${this.opts.listenPort}`
         if (entries !== Object.keys(this.announcedEntries).sort().join(';')) {
             const toDel = Object.keys(this.announcedEntries).filter(entry => !this.methods[entry]),
-                toPut = Object.keys(this.methods).filter(entry => !this.announcedEntries[entry])
+                toPut = Object.entries(this.methods).filter(([entry]) => !this.announcedEntries[entry])
             await Promise.all([
                 ...toDel.map(entry => this.etcd.delete()
                     .key(`rpc-entry/${entry}/$/${name}`).exec()) as Promise<any>[],
-                ...toPut.map(entry => this.lease.put(`rpc-entry/${entry}/$/${name}`)
-                    .value(JSON.stringify({ host } as CallTarget)).exec()) as Promise<any>[],
-                ...toPut.map(entry => this.lease.put(`rpc-proto/${entry}/$/${name}`)
-                    .value(JSON.stringify(this.methods[entry].proto)).exec()) as Promise<any>[],
+                ...toPut.map(([entry, { hash }]) => this.lease.put(`rpc-entry/${entry}/$/${name}`)
+                    .value(JSON.stringify({ host, hash } as CallTarget)).exec()) as Promise<any>[],
+                ...toPut.map(([, { hash, proto }]) => this.lease.put(`rpc-proto/${hash}`)
+                    .value(JSON.stringify(proto)).exec()) as Promise<any>[],
             ])
             this.announcedEntries = { ...this.methods }
         } else {
             await this.lease.grant()
         }
     }
+
+    private targetCache = { } as { [entry: string]: CallEntry }
+    private async search(entry: string) {
+        const cache = this.targetCache
+        if (!cache[entry]) {
+            const namespace = this.etcd.namespace(`rpc-entry/${entry}/$/`),
+                watcher = namespace.watch().prefix('').create(),
+                targets = namespace.getAll().json() as Promise<{ [name: string]: CallTarget }>,
+                lastaccess = Date.now()
+            cache[entry] = { lastaccess, targets, watcher }
+            const dict = await targets
+            watcher.then(watch => {
+                watch.on('put', req => dict[req.key.toString()] = JSON.parse(req.value.toString()))
+                watch.on('delete', req => delete dict[req.key.toString()])
+            })
+        }
+        cache[entry].lastaccess = Date.now()
+        return await cache[entry].targets
+    }
+
+    private async select(entry: string) {
+        const targets = await this.search(entry),
+            index = weightedRandom(Object.values(targets).map(item => item.weight || 1)),
+            selected = Object.values(targets)[index]
+        if (!selected) {
+            throw Error(`no targets found for entry ${entry}`)
+        }
+        const cache = this.protoCache,
+            { host, hash } = selected,
+            proto = await (cache[hash] || (cache[hash] = this.etcd.get(`rpc-proto/${hash}`).json()))
+        return { host, proto }
+    }
     
     private clientCache = { } as { [key: string]: grpc.Client }
     private protoCache = { } as { [key: string]: any }
-    query<T extends FunctionObject>(api = { } as T) {
+    query<T extends FunctionObject>(api = { } as T, opts = { } as { retry?: number }) {
         return hookFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
-                const targets = await this.etcd.namespace(`rpc-entry/${entry}/$/`).getAll().json(),
-                    [target] = Object.entries(targets as { [name: string]: CallTarget })
-                if (!target) {
-                    throw Error(`no target found for entry "${entry}"`)
-                }
-                const [name, { host }] = target
-                let proto = this.protoCache[entry]
-                if (!proto) {
-                    proto = this.protoCache[entry] = await this.etcd.get(`rpc-proto/${entry}/$/${name}`).json()
-                }
-                return await callService(entry, host, args, proto, this.clientCache)
+                const { host, proto } = await this.select(entry),
+                    func = callWithRetry(callService, opts.retry)
+                return await func(entry, host, args, proto, this.clientCache)
             }
         })
     }
     
-    private methods = { } as { [entry: string]: { func: Function, proto: Object } }
+    private methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
     register<T extends FunctionObject>(api: T) {
         const types = api.__filename && getProtoObject(api.__filename.toString(), api)
         return wrapFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
                 [{ receiver, target }] = stack,
                 func = target.bind(receiver),
-                { proto, service, impl } = makeService(entry, func, types)
-            this.methods[entry] = { func, proto }
+                { proto, service, impl } = makeService(entry, func, types),
+                hash = md5(JSON.stringify(proto))
+            this.methods[entry] = { func, proto, hash }
             this.server.addService(service, impl)
             return func
         })
     }
 
-    async destroy(waiting = 5) {
+    async destroy(waiting = 30) {
         if (!this.started) {
             throw Error('not started')
         }
 
         setTimeout(() => this.server.forceShutdown(), waiting * 1000)
         await Promise.all([
-            this.lease.revoke(),
             new Promise(resolve => this.server.tryShutdown(resolve)),
+            ...Object.values(this.targetCache).map(async target => {
+                const req = await target.watcher
+                await req.cancel()
+            }),
         ] as Promise<any>[])
 
+        await this.lease.revoke(),
         this.client.close()
         if (this.pollTimer) {
             clearTimeout(this.pollTimer)

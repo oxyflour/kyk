@@ -9,13 +9,14 @@ const hosts = process.env.ETCD_HOSTS || 'http://localhost:2379',
 
 const API1 = mkAPI1('node1')
 describe('test', function() {
-    this.timeout(30000)
+    this.timeout(60000)
 
-    let node1: EtcdMesh, node2: EtcdMesh
+    let node1: EtcdMesh, node2a: EtcdMesh, node2b: EtcdMesh
     before(async () => {
         node1 = await new EtcdMesh(opts, API1).init()
-        node2 = await new EtcdMesh(opts, API2).init()
-        api1 = node2.query(API1)
+        node2a = await new EtcdMesh(opts, API2).init()
+        node2b = await new EtcdMesh(opts, API2).init()
+        api1 = node2a.query(API1)
         api2 = node1.query(API2)
     })
 
@@ -78,7 +79,17 @@ describe('test', function() {
         assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
     })
 
+    it(`call with new node`, async () => {
+        await node2a.destroy()
+        await new Promise(resolve => setTimeout(resolve, 2000))
+        assert.equal(await api2.testDefaultParameters(1), '1x')
+        assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
+    })
+
     after(async () => {
-        await Promise.all([node1.destroy(), node2.destroy()])
+        await Promise.all([
+            node1.destroy(),
+            node2b.destroy(),
+        ])
     })
 })

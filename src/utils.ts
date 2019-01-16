@@ -1,3 +1,27 @@
+import * as crypto from 'crypto'
+
+export function md5(str: string) {
+    return crypto.createHash('md5').update(str).digest('hex')
+}
+
+export function callWithRetry<F extends (...args: any[]) => Promise<any>>(fn: F, retry = 1) {
+    return (async (...args: any[]) => {
+        let count = retry
+        while (1) {
+            try {
+                return await fn(...args)
+            } catch (err) {
+                count -= 1
+                if (count > 0) {
+                    continue
+                } else {
+                    throw err
+                }
+            }
+        }
+    }) as F
+}
+
 export interface FunctionObject { [name: string]: FunctionObject | Function | string }
 
 export interface ProxyStackItem {

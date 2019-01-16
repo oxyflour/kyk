@@ -29,6 +29,6 @@
     "get-port": "^3.2.0",
     "grpc": "^1.17.0",
     "protobufjs": "^6.8.8",
-    "serialize-error": "^2.1.0"
+    "weighted-random": "^0.1.0"
   }
 }
