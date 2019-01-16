@@ -133,6 +133,7 @@ export default class EtcdMesh extends EventEmitter {
         return await cache[entry].targets
     }
 
+    private protoCache = { } as { [key: string]: any }
     private async select(entry: string) {
         const targets = await this.search(entry),
             index = weightedRandom(Object.values(targets).map(item => item.weight || 1)),
@@ -147,14 +148,14 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private clientCache = { } as { [key: string]: grpc.Client }
-    private protoCache = { } as { [key: string]: any }
     query<T extends FunctionObject>(api = { } as T, opts = { } as { retry?: number }) {
         return hookFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
                 const { host, proto } = await this.select(entry),
-                    func = callWithRetry(callService, opts.retry)
-                return await func(entry, host, args, proto, this.clientCache)
+                    func = callWithRetry(callService, opts.retry),
+                    cache = this.clientCache
+                return await func(entry, host, args, proto, cache)
             }
         })
     }
@@ -174,22 +175,26 @@ export default class EtcdMesh extends EventEmitter {
         })
     }
 
+    private async destroyGrpc(waiting: number) {
+        setTimeout(() => this.server.forceShutdown(), waiting * 1000)
+        new Promise(resolve => this.server.tryShutdown(resolve))
+    }
+    private async destroyEtcd() {
+        await Promise.all(Object.values(this.targetCache).map(async target => {
+            const req = await target.watcher
+            await req.cancel()
+        }))
+        await this.lease.revoke()
+        this.client.close()
+    }
     async destroy(waiting = 30) {
         if (!this.started) {
             throw Error('not started')
         }
-
-        setTimeout(() => this.server.forceShutdown(), waiting * 1000)
         await Promise.all([
-            new Promise(resolve => this.server.tryShutdown(resolve)),
-            ...Object.values(this.targetCache).map(async target => {
-                const req = await target.watcher
-                await req.cancel()
-            }),
-        ] as Promise<any>[])
-
-        await this.lease.revoke(),
-        this.client.close()
+            this.destroyGrpc(waiting),
+            this.destroyEtcd(),
+        ])
         if (this.pollTimer) {
             clearTimeout(this.pollTimer)
         }
