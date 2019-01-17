@@ -4,18 +4,15 @@ import EtcdMesh from '../src'
 import mkAPI1 from './api1'
 import API2 from './api2'
 
-const hosts = process.env.ETCD_HOSTS || 'http://localhost:2379',
-    opts = { etcdOpts: { hosts } }
-
 const API1 = mkAPI1('node1')
 describe('test', function() {
     this.timeout(60000)
 
     let node1: EtcdMesh, node2a: EtcdMesh, node2b: EtcdMesh
     before(async () => {
-        node1 = await new EtcdMesh(opts, API1).init()
-        node2a = await new EtcdMesh(opts, API2).init()
-        node2b = await new EtcdMesh(opts, API2).init()
+        node1 = await new EtcdMesh({ }, API1).init()
+        node2a = await new EtcdMesh({ }, API2).init()
+        node2b = await new EtcdMesh({ }, API2).init()
         api1 = node2a.query(API1)
         api2 = node1.query(API2)
     })

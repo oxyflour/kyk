@@ -12,7 +12,9 @@ import { makeService, callService, getProtoObject } from './parser'
 export const DEFAULT_MESH_OPTS = {
     nodeName: '',
     etcdPrefix: 'etcd-mesh/',
-    etcdOpts: { } as IOptions,
+    etcdOpts: {
+        hosts: ['http://localhost:2379']
+    } as IOptions,
     etcdLease: 10,
     announceInterval: 5,
     grpcOpts: { } as {
@@ -53,15 +55,7 @@ export default class EtcdMesh extends EventEmitter {
         this.register(api)
     }
 
-    get started() {
-        return !!this.pollTimer
-    }
-
     async init() {
-        if (this.started) {
-            throw Error('already started')
-        }
-
         this.opts.nodeName = this.opts.nodeName || Math.random().toString(16).slice(2, 10)
         this.opts.listenPort = this.opts.listenPort || await getPort({ port: this.opts.listenPort })
 
@@ -72,7 +66,6 @@ export default class EtcdMesh extends EventEmitter {
         this.server.bind(`${this.opts.listenAddr}:${this.opts.listenPort}`, credentials)
         this.server.start()
 
-        this.pollTimer = setTimeout(() => { }, 0)
         await this.poll()
         return this
     }
@@ -87,9 +80,8 @@ export default class EtcdMesh extends EventEmitter {
         } catch (err) {
             this.emit('error', err)
         }
-        if (this.pollTimer) {
-            this.pollTimer = setTimeout(() => this.poll(), this.opts.announceInterval * 1000)
-        }
+        this.pollTimer = setTimeout(() => this.poll(), this.opts.announceInterval * 1000)
+        this.emit('poll')
     }
 
     private announcedEntries = { } as { [entry: string]: any }
@@ -187,17 +179,17 @@ export default class EtcdMesh extends EventEmitter {
         await this.lease.revoke()
         this.client.close()
     }
+
     async destroy(waiting = 30) {
-        if (!this.started) {
-            throw Error('not started')
+        if (this.pollTimer) {
+            await new Promise(resolve => this.once('poll', resolve))
+            clearTimeout(this.pollTimer)
+            this.pollTimer = null
         }
+
         await Promise.all([
             this.destroyGrpc(waiting),
             this.destroyEtcd(),
         ])
-        if (this.pollTimer) {
-            clearTimeout(this.pollTimer)
-        }
-        this.pollTimer = null
     }
 }
