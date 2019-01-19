@@ -1,7 +1,7 @@
 import * as path from 'path'
-import * as ts from 'typescript'
 import * as protobuf from 'protobufjs'
 
+import ts from 'typescript'
 import grpc from 'grpc'
 
 // FIXME: internal in typescript
@@ -44,9 +44,8 @@ const RENAME_TYPES = {
     null: 'NullValue',
 } as { [name: string]: string }
 
-export function getDefaultExportType(file: string) {
-    const opts = { module: ts.ModuleKind.CommonJS },
-        program = ts.createProgram([file], opts),
+export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
+    const program = ts.createProgram([file], opts),
         checker = program.getTypeChecker(),
         resolvedPath = file.replace(/\\/g, '/').toLowerCase(),
         sourceFile = program.getSourceFileByPath(resolvedPath as any),
@@ -145,8 +144,8 @@ export function getDefaultExportType(file: string) {
     }
 }
 
-export function getProtoObject(file: string, api = { } as any) {
-    const exportType = getDefaultExportType(file),
+export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions) {
+    const exportType = getDefaultExportType(file, opts),
         nested = { } as any
     
     function proto(type: ExportType): any {
