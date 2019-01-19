@@ -1,7 +1,9 @@
 #!/usr/bin/env
 
-const Mesh = require('./dist').default,
-    [, , api] = process.argv,
+require('ts-node/register')
+
+const Mesh = require('./src').default,
+    [, , action, ...params] = process.argv,
     { env } = process,
     opts = { }
 
@@ -14,7 +16,26 @@ env.KYKMSH_GRPC_OPTS   && (opts.grpcOpts   = JSON.parse(env.KYKMSH_GRPC_OPTS))
 env.KYKMSH_LISTEN_PORT && (opts.listenPort = parseInt(KYKMSH_LISTEN_PORT))
 env.KYKMSH_LISTEN_ADDR && (opts.listenAddr = env.KYKMSH_LISTEN_ADDR)
 
-new Mesh(opts, require(api).default).init().catch(err => {
-    console.error(err)
+if (action === 'serve') {
+    const node = new Mesh(opts)
+    for (const mod of params) {
+        node.register(mod)
+    }
+    node.init().catch(err => {
+        console.error(err)
+        process.exit(-1)
+    })
+} else if (action === 'call') {
+    const [method, ...args] = params,
+        fn = method.split('.').reduce((fn, name) => fn[name], new Mesh().query())
+    fn(...args.map(item => JSON.parse(item))).then(ret => {
+        console.log(ret)
+        process.exit(0)
+    }).catch(err => {
+        console.error(err)
+        process.exit(-1)
+    })
+} else {
+    console.error(`kykm serve [...module] \n kykm call <method> [...args]`)
     process.exit(-1)
-})
+}

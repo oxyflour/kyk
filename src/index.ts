@@ -153,9 +153,11 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
-    register<T extends FunctionObject>(api: T) {
-        const types = api.__filename && getProtoObject(api.__filename.toString(), api)
-        return wrapFunc(api, (...stack) => {
+    register<T extends FunctionObject>(api: T | string) {
+        const declaration = typeof api === 'string' ? api : api.__filename && api.__filename.toString(),
+            types = declaration && getProtoObject(declaration, api),
+            mod = typeof api === 'string' ? require(api).default : api
+        return wrapFunc(mod, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
                 [{ receiver, target }] = stack,
                 func = target.bind(receiver),
