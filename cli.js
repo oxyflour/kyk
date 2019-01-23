@@ -1,7 +1,6 @@
-#!/usr/bin/env
+#!/usr/bin/env node
 
 require('ts-node/register')
-
 const Mesh = require('./src').default,
     [, , action, ...params] = process.argv,
     { env } = process,
@@ -36,6 +35,6 @@ if (action === 'serve') {
         process.exit(-1)
     })
 } else {
-    console.error(`kykm serve [...module] \n kykm call <method> [...args]`)
+    console.error(`kykm serve [...module] \nkykm call <method> [...args]`)
     process.exit(-1)
 }
