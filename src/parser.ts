@@ -47,8 +47,8 @@ const RENAME_TYPES = {
 export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
     const program = ts.createProgram([file], opts),
         checker = program.getTypeChecker(),
-        resolvedPath = file.replace(/\\/g, '/').toLowerCase(),
-        sourceFile = program.getSourceFileByPath(resolvedPath as any),
+        resolvedPath = require.resolve(file, { paths: [process.cwd()] }),
+        sourceFile = resolvedPath && program.getSourceFile(resolvedPath as any),
         moduleSymbol = sourceFile && checker.getSymbolAtLocation(sourceFile),
         defaultExport = moduleSymbol &&
             checker.tryGetMemberInModuleExports(ts.InternalSymbolName.Default, moduleSymbol),
@@ -79,9 +79,17 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                 throw Error(`array of types ${reference.typeArguments} not supported, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
             }
         } else if ((type.flags & ts.TypeFlags.Object) && stringIndexed) {
-            return new ExportMap('string', parseExportType(stringIndexed, next))
+            const valType = parseExportType(stringIndexed, next)
+            if (valType instanceof ExportMap) {
+                throw Error(`nested maps are not supported, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+            }
+            return new ExportMap('string', valType)
         } else if ((type.flags & ts.TypeFlags.Object) && numberIndexed) {
-            return new ExportMap('number', parseExportType(numberIndexed, next))
+            const valType = parseExportType(numberIndexed, next)
+            if (valType instanceof ExportMap) {
+                throw Error(`nested maps are not supported, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+            }
+            return new ExportMap('number', valType)
         } else if ((type.flags & ts.TypeFlags.Object) &&
                 type.aliasSymbol && type.aliasSymbol.escapedName === 'Partial' &&
                 type.aliasTypeArguments && type.aliasTypeArguments.length === 1) {

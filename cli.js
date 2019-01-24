@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-require('ts-node/register')
 const Mesh = require('./dist').default,
     prog = require('commander'),
     path = require('path'),
@@ -20,9 +19,11 @@ prog.version(pkg.version)
     .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', undefined, env.KYKMSH_LISTEN_ADDR)
     .option('-p, --listen-port <port>', 'listen port, default random', parseInt, env.KYKMSH_LISTEN_PORT)
     .action((mods, args) => {
-        const node = new Mesh({ ...opts, ...args })
+        require('ts-node/register')
+        const node = new Mesh({ ...opts, ...args }),
+            cwd = process.cwd()
         for (const mod of mods) {
-            node.register(mod)
+            node.register(require.resolve(mod, { paths: [cwd] }))
         }
         node.init().then(() => {
             const { listenAddr, listenPort, nodeName } = node.opts

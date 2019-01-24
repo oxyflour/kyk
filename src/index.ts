@@ -154,10 +154,14 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
-    register<T extends FunctionObject>(api: T | string, opts = { module: ts.ModuleKind.CommonJS } as ts.CompilerOptions) {
-        const declaration = typeof api === 'string' ? api : api.__filename && api.__filename.toString(),
-            types = declaration && getProtoObject(declaration, api, opts),
-            mod = typeof api === 'string' ? require(api).default : api
+    register<T extends FunctionObject>(api: T | string, opts = {
+            module: ts.ModuleKind.CommonJS,
+            target: ts.ScriptTarget.ES2017,
+        } as ts.CompilerOptions) {
+        const [decl, mod] = typeof api === 'string' ?
+                [api, require(api).default] :
+                [api.__filename && api.__filename.toString(), api],
+            types = decl && getProtoObject(decl, mod, opts)
         return wrapFunc(mod, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
                 [{ receiver, target }] = stack,
