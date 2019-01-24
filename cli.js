@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 
 require('ts-node/register')
-const Mesh = require('./src').default,
+const Mesh = require('./dist').default,
     [, , action, ...params] = process.argv,
     { env } = process,
     opts = { }
@@ -26,7 +26,7 @@ if (action === 'serve') {
     })
 } else if (action === 'call') {
     const [method, ...args] = params,
-        fn = method.split('.').reduce((fn, name) => fn[name], new Mesh().query())
+        fn = method.split('.').reduce((fn, name) => fn[name], new Mesh(opts).query())
     fn(...args.map(item => JSON.parse(item))).then(ret => {
         console.log(ret)
         process.exit(0)
