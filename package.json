@@ -27,11 +27,11 @@
     "tslint": "^5.9.1"
   },
   "dependencies": {
-    "typescript": "^3.2.2",
     "etcd3": "^0.2.11",
     "get-port": "^3.2.0",
     "grpc": "^1.17.0",
     "protobufjs": "^6.8.8",
+    "typescript": "^3.2.4",
     "weighted-random": "^0.1.0"
   }
 }
