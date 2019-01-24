@@ -4,7 +4,8 @@ export class A {
     c = [ ] as string[]
 
     // WARNING: the following initilizer is not supported
-    // c = ['c'] as string[]
+    // k = ['c'] as string[]
+    // WARNING: intializers with side effects are not supported
     // d = Date.now()
 
     // functions are ingored
