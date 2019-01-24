@@ -11,7 +11,6 @@ api.ts
 ```typescript
 // define your async functions as service here, a default keyword is required
 export default {
-    __filename, // add this line so that we can find this module and use grpc
     async hello() {
         // you can use `this` to reference other async functions
         return 'my ' + await this.faas.server()
@@ -25,21 +24,16 @@ export default {
 }
 ```
 
-main.ts
-```typescript
-import KyokoMesh from 'kyoko-mesh'
-import API from './api'
+server
+```bash
+kykm serve api.ts
+# outputs: serving "9316dc36" at 0.0.0.0:62967
+```
 
-async function start() {
-    const server = new KyokoMesh({ }, API)
-        client = new KyokoMesh()
-    await Promise.all([server.init(), client.init()])
-
-    const api = client.query(API)
-    console.log('hello ' + await api.hello())
-}
-
-start()
+client
+```bash
+kykm call hello
+# outputs: my FAAS
 ```
 
 ## License
