@@ -1,10 +1,34 @@
 import * as assert from 'assert'
 
 import EtcdMesh from '../src'
+import { GrpcClient, GrpcServer } from '../src/grpc'
 import mkAPI1 from './api1'
 import API2 from './api2'
 
 const API1 = mkAPI1('node1')
+
+describe('grpc', function() {
+    this.timeout(60000)
+
+    const server = new GrpcServer('localhost:3456', [API1, API2]),
+        api1 = new GrpcClient('localhost:3456').query(API1)
+    it(`should receive message from echo server`, async () => {
+        assert.equal(await api1.testSimple('this'), 'test pass this')
+        const stream = await api1.beginTransport('start'),
+            arr = [] as string[]
+        stream.on('data', data => arr.push(data.msg))
+        stream.write({ msg: 'hey' })
+        stream.write({ msg: 'you' })
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        stream.end()
+        await new Promise(resolve => setTimeout(resolve, 1000))
+        assert.deepEqual(arr, ['start', 'hey', 'you', 'c'])
+    })
+    after(async () => {
+        server.destroy(0)
+    })
+})
+
 describe('test', function() {
     this.timeout(60000)
 
@@ -77,7 +101,7 @@ describe('test', function() {
     })
 
     it(`call with new node`, async () => {
-        await node2a.destroy()
+        await node2a.destroy(0)
         await new Promise(resolve => setTimeout(resolve, 2000))
         assert.equal(await api2.testDefaultParameters(1), '1x')
         assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
@@ -85,8 +109,8 @@ describe('test', function() {
 
     after(async () => {
         await Promise.all([
-            node1.destroy(),
-            node2b.destroy(),
+            node1.destroy(0),
+            node2b.destroy(0),
         ])
     })
 })

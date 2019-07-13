@@ -1,3 +1,5 @@
+import { GrpcStream } from "../src/utils"
+
 export default (id = 'xx') => ({
     __filename,
     map: {
@@ -29,5 +31,12 @@ export default (id = 'xx') => ({
                 return 'nesteded'
             },
         },
+    },
+    async beginTransport(flag: string) {
+        const stream = new GrpcStream<{ msg: string }>()
+        stream.write({ msg: flag })
+        stream.on('data', data => stream.write(data))
+        setTimeout(() => stream.write({ msg: 'c' }), 1000)
+        return stream
     },
 })
