@@ -7,8 +7,9 @@ import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
 import weightedRandom = require('weighted-random')
 
-import { FunctionObject, hookFunc, wrapFunc, md5, callWithRetry } from './utils'
-import { makeService, callService, getProtoObject } from './parser'
+import { ApiDefinition, hookFunc, wrapFunc, md5, callWithRetry } from './utils'
+import { getProtoObject } from './parser'
+import { makeService, callService } from './grpc'
 
 export const DEFAULT_MESH_OPTS = {
     nodeName: '',
@@ -46,7 +47,7 @@ export default class EtcdMesh extends EventEmitter {
     private readonly lease: Lease
     private readonly server: grpc.Server
 
-    constructor(opts = { } as Partial<typeof DEFAULT_MESH_OPTS>, api = { } as FunctionObject) {
+    constructor(opts = { } as Partial<typeof DEFAULT_MESH_OPTS>, api = { } as ApiDefinition) {
         super()
         this.opts = { ...DEFAULT_MESH_OPTS, ...opts }
         this.client = new Etcd3(this.opts.etcdOpts)
@@ -141,7 +142,7 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private clientCache = { } as { [key: string]: grpc.Client }
-    query<T extends FunctionObject>(api = { } as T, opts = { } as { retry?: number }) {
+    query<T extends ApiDefinition>(api = { } as T, opts = { } as { retry?: number }) {
         return hookFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
@@ -154,7 +155,7 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
-    register<T extends FunctionObject>(api: T | string, opts = {
+    register<T extends ApiDefinition>(api: T | string, opts = {
             module: ts.ModuleKind.CommonJS,
             target: ts.ScriptTarget.ES2017,
         } as ts.CompilerOptions) {

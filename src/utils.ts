@@ -4,6 +4,14 @@ export function md5(str: string) {
     return crypto.createHash('md5').update(str).digest('hex')
 }
 
+export function asyncCache<R, F extends (...args: any[]) => Promise<R>>(fn: F) {
+    const cache = { } as { [key: string]: Promise<R> }
+    return (function (...args: any[]) {
+        const key = JSON.stringify(args)
+        return cache[key] || (cache[key] = fn(...args))
+    }) as F
+}
+
 export function callWithRetry<F extends (...args: any[]) => Promise<any>>(fn: F, retry = 1) {
     return (async (...args: any[]) => {
         let count = retry
@@ -22,7 +30,7 @@ export function callWithRetry<F extends (...args: any[]) => Promise<any>>(fn: F,
     }) as F
 }
 
-export interface FunctionObject { [name: string]: FunctionObject | Function | string }
+export interface ApiDefinition { [name: string]: ApiDefinition | Function | string }
 
 export interface ProxyStackItem {
     target: any,
@@ -30,19 +38,19 @@ export interface ProxyStackItem {
     receiver: any,
 }
 
-export function hookFunc<M extends FunctionObject>(
+export function hookFunc<M extends ApiDefinition>(
         methods: M,
         proxy: (...stack: ProxyStackItem[]) => any,
         stack = [ ] as ProxyStackItem[]): M {
     return new Proxy(methods, {
         get(target, propKey, receiver) {
             const next = [{ target, propKey, receiver }].concat(stack)
-            return hookFunc(proxy(...next) as FunctionObject, proxy, next)
+            return hookFunc(proxy(...next) as ApiDefinition, proxy, next)
         }
     })
 }
 
-export function wrapFunc<M extends FunctionObject>(
+export function wrapFunc<M extends ApiDefinition>(
         receiver: M,
         callback: (...stack: ProxyStackItem[]) => void,
         stack = [ ] as ProxyStackItem[]) {
@@ -55,7 +63,7 @@ export function wrapFunc<M extends FunctionObject>(
         for (const propKey in receiver) {
             const target = receiver[propKey],
                 next = [{ target, propKey, receiver }].concat(stack)
-            ret[propKey] = wrapFunc(target as FunctionObject, callback, next)
+            ret[propKey] = wrapFunc(target as ApiDefinition, callback, next)
         }
         return ret
     }

@@ -1,8 +1,5 @@
 import * as path from 'path'
-import * as protobuf from 'protobufjs'
-
 import ts from 'typescript'
-import grpc from 'grpc'
 
 // FIXME: internal in typescript
 interface IntrinsicType extends ts.Type { intrinsicName: string }
@@ -219,48 +216,4 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
         walk(entry, member)
     }
     return { nested }
-}
-
-function makeClient(proto: any, srvName: string, host: string) {
-    const root = protobuf.Root.fromJSON(proto),
-        desc = grpc.loadObject(root),
-        Client = desc[srvName] as typeof grpc.Client
-    return new Client(host, grpc.credentials.createInsecure())
-}
-
-export async function callService(entry: string, host: string, args: any[],
-        proto: any, cache = { } as { [key: string]: grpc.Client }) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
-        funcName = path.basename(entry),
-        cacheKey = `${srvName}/$/${host}`,
-        client = cache[cacheKey] || (cache[cacheKey] = makeClient(proto, srvName, host)),
-        reqFields = proto.nested[`${srvName}KykReq`].fields,
-        resFields = proto.nested[`${srvName}KykRes`].fields,
-        request = resFields.json ? { json: JSON.stringify(args) } :
-            Object.keys(reqFields).reduce((req, key, index) => ({ ...req, [key]: args[index] }), { })
-    return await new Promise((resolve, reject) => {
-        (client as any)[funcName](request, (err: Error, ret: any) => {
-            err ? reject(err) : resolve(resFields.json ? (ret.json ? JSON.parse(ret.json) : undefined) : ret.result)
-        })
-    })
-}
-
-const JSON_TYPE = { fields: { json: { type: 'string', id: 1 } } }
-export function makeService(entry: string, func: (...args: any[]) => Promise<any>, types?: any) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
-        funcName = path.basename(entry),
-        requestType = `${srvName}KykReq`,
-        responseType = `${srvName}KykRes`,
-        rpc = { methods: { [funcName]: { requestType, responseType } } },
-        proto = types || { nested: { [requestType]: JSON_TYPE, [responseType]: JSON_TYPE, [srvName]: rpc } },
-        root = protobuf.Root.fromJSON(proto),
-        desc = grpc.loadObject(root),
-        service = (desc[srvName] as any).service,
-        resFields = proto.nested[responseType].fields
-    const fn = ({ request }: grpc.ServerUnaryCall<any>, callback: grpc.sendUnaryData<any>) => {
-        func(...(resFields.json ? JSON.parse(request.json) : Object.values(request)))
-            .then(result => callback(null, resFields.json ? { json: JSON.stringify(result) } : { result }))
-            .catch(error => callback(error, undefined))
-    }
-    return { proto, service, impl: { [funcName]: fn } }
 }
