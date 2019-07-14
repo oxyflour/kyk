@@ -1,5 +1,4 @@
 import crypto from 'crypto'
-import { Readable } from 'stream'
 
 export function md5(str: string) {
     return crypto.createHash('md5').update(str).digest('hex')
@@ -16,23 +15,6 @@ export function asyncCache<R, F extends (...args: any[]) => Promise<R>>(fn: F) {
 type ReturnPromise<T> = (...args: any[]) => Promise<T>
 type ReturnAsyncIterator<T> = (...args: any[]) => AsyncIterableIterator<T>
 export interface ApiDefinition { [name: string]: string | ReturnAsyncIterator<any> | ReturnPromise<any> | ApiDefinition }
-
-export function readableToAsyncIterator(stream: Readable) {
-    let cbs = { resolve: (() => 0) as Function, reject: (() => 0) as Function },
-        pending = new Promise((resolve, reject) => cbs = { resolve, reject })
-    function callback(err: any, ret: any) {
-        err ? cbs.reject(err) : cbs.resolve(ret)
-        pending = new Promise((resolve, reject) => cbs = { resolve, reject })
-    }
-    stream.on('data', ({ result }: any) => callback(null, { value: result, done: false }))
-    stream.on('error', error => callback(error, null))
-    stream.on('end', () => callback(null, { done: true }))
-    return {
-        [Symbol.asyncIterator]() {
-            return { next: () => pending }
-        }
-    }
-}
 
 export interface ProxyStackItem {
     target: any,

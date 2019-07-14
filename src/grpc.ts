@@ -2,10 +2,11 @@ import path from 'path'
 import fs from 'fs'
 import grpc, { KeyCertPair, ServerCredentials } from 'grpc'
 import ts from 'typescript'
+import { EventIterator } from 'event-iterator'
 import * as protobuf from 'protobufjs'
 
 import { getProtoObject } from './parser'
-import { ApiDefinition, wrapFunc, md5, hookFunc, asyncCache, readableToAsyncIterator } from './utils'
+import { ApiDefinition, wrapFunc, md5, hookFunc, asyncCache } from './utils'
 
 const QUERY_PROTO = require(path.join(__dirname, '..', 'proto.json')),
     QUERY_SERVICE = '_query_proto'
@@ -43,11 +44,25 @@ export function callService(entry: string, host: string, args: any[], proto: any
         { requestType, responseStream } = proto.nested[srvName].methods[funcName],
         fields = proto.nested[requestType].fields,
         request = Object.keys(fields).reduce((all, key, idx) => ({ ...all, [key]: args[idx] }), { })
-    return responseStream ?
-        readableToAsyncIterator(client[funcName](request)) :
-        new Promise((resolve, reject) => {
-            client[funcName](request, (err: Error, ret: any) => err ? reject(err) : resolve(ret.result))
+    if (responseStream) {
+        const stream = client[funcName](request) as grpc.ClientReadableStream<any>
+        let cb: (data: any) => any
+        return new EventIterator(
+            (push, pop, fail) => stream
+                .on('data', cb = data => push(data.result))
+                .on('end', pop)
+                .on('error', fail),
+            (_, pop, fail) => stream
+                .removeListener('data', cb)
+                .removeListener('end', pop)
+                .removeListener('error', fail),
+        )
+    } else {
+        return new Promise((resolve, reject) => {
+            client[funcName](request,
+                (err: Error, ret: any) => err ? reject(err) : resolve(ret.result))
         })
+    }
 }
 
 export function makeService(entry: string, func: (...args: any[]) => Promise<any> | AsyncIterableIterator<any>, proto: any) {
@@ -59,21 +74,24 @@ export function makeService(entry: string, func: (...args: any[]) => Promise<any
         { requestType, responseStream } = proto.nested[srvName].methods[funcName],
         fields = proto.nested[requestType].fields,
         argKeys = Object.keys(fields).sort((a, b) => fields[a].id - fields[b].id),
-        makeArgs = (request: any) => argKeys.map(key => request[key]),
-        fn = responseStream ?
-        async (stream: grpc.ServerWriteableStream<any>) => {
+        makeArgs = (request: any) => argKeys.map(key => request[key])
+    let fn: Function
+    if (responseStream) {
+        fn = async (stream: grpc.ServerWriteableStream<any>) => {
             const iter = func(...makeArgs(stream.request)) as AsyncIterableIterator<any>
             for await (const result of iter) {
                 stream.write({ result })
             }
             stream.end()
-        } :
-        (call: grpc.ServerUnaryCall<any>, callback: grpc.sendUnaryData<any>) => {
+        }
+    } else {
+        fn = (call: grpc.ServerUnaryCall<any>, callback: grpc.sendUnaryData<any>) => {
             const promise = func(...makeArgs(call.request)) as Promise<any>
             promise
                 .then(result => callback(null, { result }))
                 .catch(error => callback(error, null))
         }
+    }
     return { proto, service, impl: { [funcName]: fn } }
 }
 
