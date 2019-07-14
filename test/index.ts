@@ -1,39 +1,20 @@
 import * as assert from 'assert'
 
 import EtcdMesh from '../src'
-import { GrpcClient, GrpcServer } from '../src/grpc'
 import mkAPI1 from './api1'
 import API2 from './api2'
 
 const API1 = mkAPI1('node1')
-
-describe('grpc', function() {
-    this.timeout(60000)
-
-    const server = new GrpcServer('localhost:3456', [API1, API2]),
-        client = new GrpcClient('localhost:3456')
-    it(`should receive message from echo server`, async () => {
-        await client.init()
-        const api = client.query(API1),
-            arr = []
-        for await (const item of api.startStream()) {
-            arr.push(item)
-        }
-        assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
-    })
-    after(async () => {
-        server.destroy(0)
-    })
-})
-
 describe('test', function() {
     this.timeout(60000)
 
     let node1: EtcdMesh, node2a: EtcdMesh, node2b: EtcdMesh
     before(async () => {
-        node1 = await new EtcdMesh({ }, API1).init()
-        node2a = await new EtcdMesh({ }, API2).init()
-        node2b = await new EtcdMesh({ }, API2).init()
+        [node1, node2a, node2b] = await Promise.all([
+            new EtcdMesh({ }, API1).init(),
+            new EtcdMesh({ }, API2).init(),
+            new EtcdMesh({ }, API2).init(),
+        ])
         api1 = node2a.query(API1)
         api2 = node1.query(API2)
     })
@@ -95,6 +76,14 @@ describe('test', function() {
     it(`call with default parameters`, async () => {
         assert.equal(await api2.testDefaultParameters(1), '1x')
         assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
+    })
+
+    it(`should work with returned async iterator`, async () => {
+        const arr = []
+        for await (const item of api1.startStream()) {
+            arr.push(item)
+        }
+        assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
     })
 
     it(`call with new node`, async () => {

@@ -65,7 +65,8 @@ export function callService(entry: string, host: string, args: any[], proto: any
     }
 }
 
-export function makeService(entry: string, func: (...args: any[]) => Promise<any> | AsyncIterableIterator<any>, proto: any) {
+export function makeService(entry: string,
+        func: (...args: any[]) => Promise<any> | AsyncIterableIterator<any>, proto: any) {
     const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
         funcName = path.basename(entry),
         root = (protobuf as any).Root.fromJSON(proto),
@@ -102,35 +103,23 @@ export interface GrpcOptions {
 }
 
 export class GrpcServer {
-    constructor(addr: string, apis: ApiDefinition | ApiDefinition[],
-            opts = { } as GrpcOptions,
-            private readonly server = new grpc.Server()) {
+    constructor(private readonly server = new grpc.Server()) {
+        const proto = async (entry: string) => JSON.stringify(this.methods[entry].proto),
+            { service, impl } = makeService(QUERY_SERVICE, proto, QUERY_PROTO)
+        server.addService(service, impl)
+    }
+
+    start(addr: string, opts = { } as GrpcOptions) {
         const { rootCerts, keyCertPairs, checkClientCertificate } = opts,
             credentials = keyCertPairs ?
                 ServerCredentials.createSsl(rootCerts, keyCertPairs, checkClientCertificate) :
-                ServerCredentials.createInsecure(),
-            { service, impl } = makeService(QUERY_SERVICE, this.protos.bind(this), QUERY_PROTO)
-        server.addService(service, impl)
-        for (const api of Array.isArray(apis) ? apis : [apis]) {
-            this.register(api)
-        }
-        server.bind(addr, credentials)
-        server.start()
-    }
-
-    async protos(entry: string) {
-        if (entry) {
-            return JSON.stringify(this.methodMap[entry].proto)
-        }
-        const protos = { } as any
-        for (const [entry, { proto }] of Object.entries(this.methodMap)) {
-            protos[entry] = proto
-        }
-        return JSON.stringify(protos)
+                ServerCredentials.createInsecure()
+        this.server.bind(addr, credentials)
+        this.server.start()
     }
     
-    private methodMap = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
-    private register<T extends ApiDefinition>(api: T | string, config?: ts.CompilerOptions) {
+    readonly methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
+    register<T extends ApiDefinition>(api: T | string, config?: ts.CompilerOptions) {
         const opts = config || loadTsConfig(path.join(__dirname, '..', 'tsconfig.json')),
             decl = typeof api === 'string' ? api : `${api.__filename}`,
             mod  = typeof api === 'string' ? require(api).default : api,
@@ -141,7 +130,7 @@ export class GrpcServer {
                 func = target.bind(receiver),
                 { proto, service, impl } = makeService(entry, func, types),
                 hash = md5(JSON.stringify(proto))
-            this.methodMap[entry] = { func, proto, hash }
+            this.methods[entry] = { func, proto, hash }
             this.server.addService(service, impl)
             return func
         })
@@ -154,25 +143,54 @@ export class GrpcServer {
 }
 
 export class GrpcClient {
-    constructor(private host: string) {
-        this.init(host)
+    constructor(private host = 'localhost:3456') {
     }
 
-    private clientCache = { } as { [key: string]: grpc.Client }
-    query<T extends ApiDefinition>(def = { } as T, host = this.host) {
+    private proto = asyncCache(async (entry: string) => {
+        const json = await callService(QUERY_SERVICE, this.host, [entry], QUERY_PROTO, this.clients)
+        return JSON.parse(`${json}`)
+    })
+    async select(entry: string) {
+        const { host } = this,
+            proto = await this.proto(entry)
+        return { host, proto }
+    }
+
+    private clients = { } as { [key: string]: grpc.Client }
+    private call(entry: string, args: any[]) {
+        let proxy: AsyncIterableIterator<any>
+        const cbs = { resolve: ((_: any) => 0), reject: ((_: any) => 0) },
+            promise = new Promise((resolve, reject) => Object.assign(cbs, { resolve, reject })),
+            iter = promise as any,
+            cache = this.clients
+        // for async functions
+        const start = async () => {
+            try {
+                const { host, proto } = await this.select(entry),
+                    ret = callService(entry, host, args, proto, cache)
+                cbs.resolve(ret)
+            } catch (err) {
+                cbs.reject(err)
+            }
+        }
+        promise.then = (...args) => start() && Promise.prototype.then.apply(promise, args) as any
+        // for async iterators
+        const next = async () => {
+            if (!proxy) {
+                const { host, proto } = await this.select(entry),
+                    ret = callService(entry, host, args, proto, cache) as any
+                proxy = ret[Symbol.asyncIterator]()
+            }
+            return await proxy.next()
+        }
+        iter[Symbol.asyncIterator] = () => ({ next })
+        return promise
+    }
+
+    query<T extends ApiDefinition>(def = { } as T) {
         return hookFunc(def, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
-            return (...args: any[]) => {
-                const proto = this.protoCache[entry],
-                    cache = this.clientCache
-                return callService(entry, host, args, proto, cache)
-            }
+            return (...args: any[]) => this.call(entry, args)
         })
     }
-
-    private protoCache = { } as { [key: string]: any }
-    init = asyncCache(async (host = this.host) => {
-        const json = await callService(QUERY_SERVICE, host, [''], QUERY_PROTO, this.clientCache)
-        this.protoCache = JSON.parse(`${json}`)
-    })
 }
