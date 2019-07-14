@@ -1,4 +1,5 @@
-import * as os from 'os'
+import os from 'os'
+import path from 'path'
 import ts from 'typescript'
 import getPort from 'get-port'
 import grpc, { KeyCertPair, ServerCredentials } from 'grpc'
@@ -7,9 +8,9 @@ import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
 import weightedRandom = require('weighted-random')
 
-import { ApiDefinition, hookFunc, wrapFunc, md5, callWithRetry } from './utils'
+import { ApiDefinition, hookFunc, wrapFunc, md5 } from './utils'
 import { getProtoObject } from './parser'
-import { makeService, callService } from './grpc'
+import { makeService, callService, loadTsConfig } from './grpc'
 
 export const DEFAULT_MESH_OPTS = {
     nodeName: '',
@@ -142,26 +143,22 @@ export default class EtcdMesh extends EventEmitter {
     }
     
     private clientCache = { } as { [key: string]: grpc.Client }
-    query<T extends ApiDefinition>(api = { } as T, opts = { } as { retry?: number }) {
+    query<T extends ApiDefinition>(api = { } as T) {
         return hookFunc(api, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
             return async (...args: any[]) => {
                 const { host, proto } = await this.select(entry),
-                    func = callWithRetry(callService, opts.retry),
                     cache = this.clientCache
-                return await func(entry, host, args, proto, cache)
+                return await callService(entry, host, args, proto, cache)
             }
         })
     }
     
     private methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
-    register<T extends ApiDefinition>(api: T | string, opts = {
-            module: ts.ModuleKind.CommonJS,
-            target: ts.ScriptTarget.ES2017,
-        } as ts.CompilerOptions) {
-        const [decl, mod] = typeof api === 'string' ?
-                [api, require(api).default] :
-                [api.__filename && api.__filename.toString(), api],
+    register<T extends ApiDefinition>(api: T | string, config?: ts.CompilerOptions) {
+        const opts = config || loadTsConfig(path.join(__dirname, '..', 'tsconfig.json')),
+            decl = typeof api === 'string' ? api : `${api.__filename}`,
+            mod  = typeof api === 'string' ? require(api).default : api,
             types = decl && getProtoObject(decl, mod, opts)
         return wrapFunc(mod, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),

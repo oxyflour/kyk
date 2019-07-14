@@ -125,15 +125,13 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                 }
                 const returnType = signature.getReturnType() as TypeReferenceType
                 if (returnType.symbol && returnType.symbol.escapedName === 'Promise' && returnType.typeArguments) {
-                    let [ret] = returnType.typeArguments as TypeReferenceType[],
-                        useStream = false
-                    if (ret.symbol && ret.symbol.escapedName === 'GrpcStream' && ret.typeArguments) {
-                        [ret] = ret.typeArguments as TypeReferenceType[]
-                        useStream = true
-                    }
-                    return new ExportFunc(new ExportObject(args), parseExportType(ret, next), useStream)
+                    const [ret] = returnType.typeArguments as TypeReferenceType[]
+                    return new ExportFunc(new ExportObject(args), parseExportType(ret, next), false)
+                } else if (returnType.symbol && returnType.symbol.escapedName === 'AsyncIterableIterator' && returnType.typeArguments) {
+                    let [ret] = returnType.typeArguments as TypeReferenceType[]
+                    return new ExportFunc(new ExportObject(args), parseExportType(ret, next), true)
                 } else {
-                    throw Error(`return value is not an async function, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+                    throw Error(`return value is not an async function or iterator, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
                 }
             } else {
                 throw Error(`can not parse function type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
@@ -199,18 +197,10 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
                 funcName = path.basename(entry),
                 requestType = `${srvName}KykReq`,
                 responseType = `${srvName}KykRes`,
-                methods = { [funcName]: { requestType, responseType } } as any
+                methods = { [funcName]: { requestType, responseType, responseStream: type.useStream } }
             nested[srvName] = { methods }
             nested[requestType] = proto(type.args)
             nested[responseType] = proto(new ExportObject({ result: { id: 1, member: type.ret, required: true } }))
-            if (type.useStream) {
-                const streamType = `${srvName}KykStreamTyp`,
-                    streamFunc = `${funcName}KykStream`
-                methods[funcName].streamFunc = streamFunc
-                methods[streamFunc] = { requestType: streamType, responseType: streamType, requestStream: true, responseStream: true }
-                nested[streamType] = proto(type.ret)
-                nested[responseType] = proto(new ExportObject({ result: { id: 1, member: 'string', required: true } }))
-            }
         } else if (type instanceof ExportObject) {
             for (const [name, { member }] of Object.entries(type.members)) {
                 walk(entry + '/' + name, member)

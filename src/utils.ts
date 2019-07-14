@@ -1,59 +1,5 @@
 import crypto from 'crypto'
-import { ServerWriteableStream, ClientReadableStream } from 'grpc'
-
-export class GrpcStream<T = any> {
-    constructor() {
-        this.on('end', () => this.end())
-    }
-    private cached = [] as (T | null)[]
-    private writer = null as ServerWriteableStream<T> | null
-    flush(writer: ServerWriteableStream<T>) {
-        this.writer = writer
-        for (const data of this.cached) {
-            if (data) {
-                writer.write(data)
-            } else {
-                writer.end()
-            }
-        }
-        this.cached = []
-        return this
-    }
-    write(msg: T) {
-        if (this.writer) {
-            this.writer.write(msg)
-        } else {
-            this.cached.push(msg)
-        }
-        return this
-    }
-    end() {
-        if (this.writer) {
-            this.writer.end()
-        } else {
-            this.cached.push(null)
-        }
-    }
-    private callbacks = [] as [string, Function][]
-    private reader = null as ClientReadableStream<T> | null
-    bind(reader: ClientReadableStream<T>) {
-        this.reader = reader
-        for (const [evt, cb] of this.callbacks) {
-            reader.on(evt, cb as any)
-        }
-        this.callbacks = []
-        return this
-    }
-    on(evt: 'data', cb: (data: T) => any): void
-    on(evt: 'end', cb: () => any): void
-    on(evt: string, cb: (data: any) => any) {
-        if (this.reader) {
-            this.reader.on(evt, cb)
-        } else {
-            this.callbacks.push([evt, cb])
-        }
-    }
-}
+import { Readable } from 'stream'
 
 export function md5(str: string) {
     return crypto.createHash('md5').update(str).digest('hex')
@@ -67,26 +13,26 @@ export function asyncCache<R, F extends (...args: any[]) => Promise<R>>(fn: F) {
     }) as F
 }
 
-export function callWithRetry<F extends ReturnPromise<any>>(fn: F, retry = 1) {
-    return (async (...args: any[]) => {
-        let count = retry
-        while (1) {
-            try {
-                return await fn(...args)
-            } catch (err) {
-                count -= 1
-                if (count > 0) {
-                    continue
-                } else {
-                    throw err
-                }
-            }
-        }
-    }) as F
-}
-
 type ReturnPromise<T> = (...args: any[]) => Promise<T>
-export interface ApiDefinition { [name: string]: ApiDefinition | ReturnPromise<any> | string }
+type ReturnAsyncIterator<T> = (...args: any[]) => AsyncIterableIterator<T>
+export interface ApiDefinition { [name: string]: string | ReturnAsyncIterator<any> | ReturnPromise<any> | ApiDefinition }
+
+export function readableToAsyncIterator(stream: Readable) {
+    let cbs = { resolve: (() => 0) as Function, reject: (() => 0) as Function },
+        pending = new Promise((resolve, reject) => cbs = { resolve, reject })
+    function callback(err: any, ret: any) {
+        err ? cbs.reject(err) : cbs.resolve(ret)
+        pending = new Promise((resolve, reject) => cbs = { resolve, reject })
+    }
+    stream.on('data', ({ result }: any) => callback(null, { value: result, done: false }))
+    stream.on('error', error => callback(error, null))
+    stream.on('end', () => callback(null, { done: true }))
+    return {
+        [Symbol.asyncIterator]() {
+            return { next: () => pending }
+        }
+    }
+}
 
 export interface ProxyStackItem {
     target: any,

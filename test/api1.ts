@@ -1,16 +1,14 @@
-import { GrpcStream } from "../src/utils"
-
 export default (id = 'xx') => ({
     __filename,
+    async testSimple(you: string) {
+        return 'test pass ' + you
+    },
     map: {
         [id]: {
             async ok() {
                 return id + ' ok'
             }
         }
-    },
-    async testSimple(you: string) {
-        return 'test pass ' + you
     },
     async testThis() {
         return 'this ' + await this.testSimple('this')
@@ -32,11 +30,10 @@ export default (id = 'xx') => ({
             },
         },
     },
-    async beginTransport(flag: string) {
-        const stream = new GrpcStream<{ msg: string }>()
-        stream.write({ msg: flag })
-        stream.on('data', data => stream.write(data))
-        setTimeout(() => stream.write({ msg: 'c' }), 1000)
-        return stream
+    async *startStream() {
+        for (let i = 1; i < 10; i ++) {
+            await new Promise(resolve => setTimeout(resolve, 100))
+            yield i
+        }
     },
 })

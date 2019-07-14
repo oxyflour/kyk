@@ -11,18 +11,15 @@ describe('grpc', function() {
     this.timeout(60000)
 
     const server = new GrpcServer('localhost:3456', [API1, API2]),
-        api1 = new GrpcClient('localhost:3456').query(API1)
+        client = new GrpcClient('localhost:3456')
     it(`should receive message from echo server`, async () => {
-        assert.equal(await api1.testSimple('this'), 'test pass this')
-        const stream = await api1.beginTransport('start'),
-            arr = [] as string[]
-        stream.on('data', data => arr.push(data.msg))
-        stream.write({ msg: 'hey' })
-        stream.write({ msg: 'you' })
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        stream.end()
-        await new Promise(resolve => setTimeout(resolve, 1000))
-        assert.deepEqual(arr, ['start', 'hey', 'you', 'c'])
+        await client.init()
+        const api = client.query(API1),
+            arr = []
+        for await (const item of api.startStream()) {
+            arr.push(item)
+        }
+        assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
     })
     after(async () => {
         server.destroy(0)
