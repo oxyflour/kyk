@@ -193,4 +193,11 @@ export class GrpcClient {
             return (...args: any[]) => this.call(entry, args)
         })
     }
+
+    destroy() {
+        for (const client of Object.values(this.clients)) {
+            client.close()
+        }
+        this.clients = { }
+    }
 }

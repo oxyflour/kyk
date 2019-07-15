@@ -29,7 +29,7 @@ prog.version(pkg.version)
             }
             await node.init()
             const { listenAddr, listenPort, nodeName } = node.opts
-            console.log(`serving "${nodeName}" at ${listenAddr}:${listenPort}, ${node.entries.length} entries`)
+            console.log(`serving "${nodeName}" with ${node.entries.length} entries at ${listenAddr}:${listenPort}`)
         } catch (err) {
             console.error(err)
             process.exit(-1)
@@ -39,7 +39,8 @@ prog.version(pkg.version)
 prog.command('call <method> [args...]')
     .action(async (method: string, args: string[]) => {
         try {
-            const fn = method.split('.').reduce((fn, name) => fn[name], new Mesh(opts).query() as any),
+            const api = new Mesh(opts).query() as any,
+                fn = method.split('.').reduce((fn, name) => fn[name], api),
                 ret = await fn(...args.map(item => JSON.parse(item)))
             console.log(JSON.stringify(ret, null, 4))
             process.exit(0)

@@ -21,19 +21,39 @@ export default {
             return 'FAAS'
         },
     },
+    async *stream() {
+        for (let i = 0; i < 10; i ++) {
+            await new Promise(resolve => setTimeout(resolve, 100))
+            yield i
+        }
+    },
 }
 ```
 
 server
 ```bash
 kykm serve api.ts
-# outputs: serving "9316dc36" at 0.0.0.0:62967
+# outputs: serving "9316dc36" with 3 entries at 0.0.0.0:62967
 ```
 
 client
 ```bash
 kykm call hello
 # outputs: my FAAS
+```
+
+demo.ts
+```typescript
+import Mesh from 'kyoko-mesh'
+import API from './api'
+
+const api = new Mesh().query(API)
+async function run() {
+    for await (const item of api.stream()) {
+        console.log(item)
+    }
+}
+run()
 ```
 
 ## License

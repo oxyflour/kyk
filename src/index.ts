@@ -38,7 +38,7 @@ export interface CallEntry {
     lastaccess: number,
 }
 
-export default class EtcdMesh extends EventEmitter {
+export default class KyokoMesh extends EventEmitter {
     readonly opts: MeshOptions
     private readonly etcd: Etcd3
     private readonly namespace: Namespace
@@ -169,6 +169,7 @@ export default class EtcdMesh extends EventEmitter {
 
         await Promise.all([
             this.server.destroy(waiting),
+            this.client.destroy(),
             this.destroyEtcd(),
         ])
     }
