@@ -26,7 +26,9 @@ export class ExportMap {
         public value: ExportType) { }
 }
 export class ExportFunc {
-    constructor(public args: ExportObject, public ret: ExportType, public useStream: boolean) { }
+    constructor(
+        public args: ExportObject, public ret: ExportType,
+        public opts: { requestStream: boolean, responseStream: boolean }) { }
 }
 export type ExportType = string | ExportFunc | ExportObject | ExportArray | ExportMap
 
@@ -111,25 +113,37 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
         } else if (symbol && symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)) {
             const signatures = type.getCallSignatures()
             if (signatures.length === 1) {
+                let requestStream = false
                 const [signature] = signatures,
-                    args = { } as { [name: string]: ExportMember }
-                for (const [index, symbol] of signature.parameters.entries()) {
-                    if (symbol.valueDeclaration) {
-                        const decl = symbol.valueDeclaration as ts.ParameterDeclaration,
-                            initializer = decl.initializer && ts.transpile(decl.initializer.getFullText()),
-                            type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
-                            member = parseExportType(type, next),
-                            required = !decl.questionToken
-                        args[symbol.escapedName.toString()] = { id: index + 1, member, initializer, required }
+                    args = { } as { [name: string]: ExportMember },
+                    { parameters } = signature,
+                    firstParamType = parameters[0] &&
+                        checker.getTypeOfSymbolAtLocation(parameters[0], parameters[0].valueDeclaration) as TypeReferenceType
+                if (parameters.length === 1 && firstParamType && firstParamType.symbol &&
+                        firstParamType.symbol.escapedName === 'AsyncIterableIterator') {
+                    const member = parseExportType(firstParamType.typeArguments[0], next)
+                    args.result = { id: 1, member, required: true }
+                    requestStream = true
+                } else {
+                    for (const [index, symbol] of signature.parameters.entries()) {
+                        if (symbol.valueDeclaration) {
+                            const decl = symbol.valueDeclaration as ts.ParameterDeclaration,
+                                initializer = decl.initializer && ts.transpile(decl.initializer.getFullText()),
+                                type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
+                                member = parseExportType(type, next),
+                                required = !decl.questionToken
+                            args[symbol.escapedName.toString()] = { id: index + 1, member, initializer, required }
+                        }
                     }
                 }
-                const returnType = signature.getReturnType() as TypeReferenceType
+                const argsType = new ExportObject(args),
+                    returnType = signature.getReturnType() as TypeReferenceType
                 if (returnType.symbol && returnType.symbol.escapedName === 'Promise' && returnType.typeArguments) {
                     const [ret] = returnType.typeArguments as TypeReferenceType[]
-                    return new ExportFunc(new ExportObject(args), parseExportType(ret, next), false)
+                    return new ExportFunc(argsType, parseExportType(ret, next), { requestStream, responseStream: false })
                 } else if (returnType.symbol && returnType.symbol.escapedName === 'AsyncIterableIterator' && returnType.typeArguments) {
                     let [ret] = returnType.typeArguments as TypeReferenceType[]
-                    return new ExportFunc(new ExportObject(args), parseExportType(ret, next), true)
+                    return new ExportFunc(argsType, parseExportType(ret, next), { requestStream, responseStream: true })
                 } else {
                     throw Error(`return value is not an async function or iterator, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
                 }
@@ -197,7 +211,7 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
                 funcName = path.basename(entry),
                 requestType = `${srvName}KykReq`,
                 responseType = `${srvName}KykRes`,
-                methods = { [funcName]: { requestType, responseType, responseStream: type.useStream } }
+                methods = { [funcName]: { requestType, responseType, ...type.opts } }
             nested[srvName] = { methods }
             nested[requestType] = proto(type.args)
             nested[responseType] = proto(new ExportObject({ result: { id: 1, member: type.ret, required: true } }))

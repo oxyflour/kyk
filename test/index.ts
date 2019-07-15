@@ -77,9 +77,20 @@ describe('test', function() {
 
     it(`should work with returned async iterator`, async () => {
         const arr = []
-        for await (const item of api1.startStream()) {
+        for await (const item of api1.returnStream()) {
             arr.push(item)
         }
+        assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
+    })
+
+    it(`should work passing async iterator`, async () => {
+        async function *input() {
+            for (let i = 1; i < 10; i ++) {
+                await new Promise(resolve => setTimeout(resolve, 100))
+                yield i
+            }
+        }
+        const arr = await api1.inputStream(input())
         assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
     })
 

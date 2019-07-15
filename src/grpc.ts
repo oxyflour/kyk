@@ -1,7 +1,9 @@
 import path from 'path'
 import fs from 'fs'
-import grpc, { KeyCertPair, ServerCredentials } from 'grpc'
 import ts from 'typescript'
+import grpc, { KeyCertPair, ServerCredentials } from 'grpc'
+
+import { Readable, Writable } from 'stream'
 import { EventIterator } from 'event-iterator'
 import * as protobuf from 'protobufjs'
 
@@ -35,32 +37,53 @@ function makeClient(proto: any, srvName: string, host: string) {
     return new Client(host, grpc.credentials.createInsecure())
 }
 
+function makeAsyncIterator(stream: Readable) {
+    let callback: (data: any) => any
+    return new EventIterator(
+        (push, pop, fail) => stream
+            .on('data', callback = data => push(data.result))
+            .on('end', pop)
+            .on('error', fail),
+        (_, pop, fail) => stream
+            .removeListener('data', callback)
+            .removeListener('end', pop)
+            .removeListener('error', fail),
+    )
+}
+
+async function startAsyncIterator(stream: Writable, iter: AsyncIterableIterator<any>) {
+    for await (const result of iter) {
+        stream.write({ result })
+    }
+    stream.end()
+}
+
 const clientCache = { } as { [key: string]: any }
 export function callService(entry: string, host: string, args: any[], proto: any, cache = clientCache) {
     const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
         funcName = path.basename(entry),
         cacheKey = `${srvName}/$/${host}`,
         client = cache[cacheKey] || (cache[cacheKey] = makeClient(proto, srvName, host)),
-        { requestType, responseStream } = proto.nested[srvName].methods[funcName],
+        { requestType, requestStream, responseStream } = proto.nested[srvName].methods[funcName],
         fields = proto.nested[requestType].fields,
         request = Object.keys(fields).reduce((all, key, idx) => ({ ...all, [key]: args[idx] }), { })
-    if (responseStream) {
+    if (requestStream && responseStream) {
+        const stream = client[funcName]() as grpc.ClientDuplexStream<any, any>
+        startAsyncIterator(stream, args[0])
+        return makeAsyncIterator(stream)
+    } else if (requestStream) {
+        return new Promise((resolve, reject) => {
+            const callback = (err: Error, ret: any) => err ? reject(err) : resolve(ret.result),
+                stream = client[funcName](callback) as grpc.ClientWritableStream<any>
+            startAsyncIterator(stream, args[0])
+        })
+    } else if (responseStream) {
         const stream = client[funcName](request) as grpc.ClientReadableStream<any>
-        let cb: (data: any) => any
-        return new EventIterator(
-            (push, pop, fail) => stream
-                .on('data', cb = data => push(data.result))
-                .on('end', pop)
-                .on('error', fail),
-            (_, pop, fail) => stream
-                .removeListener('data', cb)
-                .removeListener('end', pop)
-                .removeListener('error', fail),
-        )
+        return makeAsyncIterator(stream)
     } else {
         return new Promise((resolve, reject) => {
-            client[funcName](request,
-                (err: Error, ret: any) => err ? reject(err) : resolve(ret.result))
+            const callback = (err: Error, ret: any) => err ? reject(err) : resolve(ret.result)
+            client[funcName](request, callback)
         })
     }
 }
@@ -72,18 +95,29 @@ export function makeService(entry: string,
         root = (protobuf as any).Root.fromJSON(proto),
         desc = grpc.loadObject(root),
         service = (desc[srvName] as any).service,
-        { requestType, responseStream } = proto.nested[srvName].methods[funcName],
+        { requestType, requestStream, responseStream } = proto.nested[srvName].methods[funcName],
         fields = proto.nested[requestType].fields,
         argKeys = Object.keys(fields).sort((a, b) => fields[a].id - fields[b].id),
         makeArgs = (request: any) => argKeys.map(key => request[key])
     let fn: Function
-    if (responseStream) {
-        fn = async (stream: grpc.ServerWriteableStream<any>) => {
+    if (requestStream && responseStream) {
+        fn = (stream: grpc.ServerDuplexStream<any, any>) => {
+            const arg = makeAsyncIterator(stream),
+                iter = func(arg) as AsyncIterableIterator<any>
+            startAsyncIterator(stream, iter)
+        }
+    } else if (requestStream) {
+        fn = (stream: grpc.ServerReadableStream<any>, callback: grpc.sendUnaryData<any>) => {
+            const arg = makeAsyncIterator(stream),
+                promise = func(arg) as Promise<any>
+            promise
+                .then(result => callback(null, { result }))
+                .catch(error => callback(error, null))
+        }
+    } else if (responseStream) {
+        fn = (stream: grpc.ServerWriteableStream<any>) => {
             const iter = func(...makeArgs(stream.request)) as AsyncIterableIterator<any>
-            for await (const result of iter) {
-                stream.write({ result })
-            }
-            stream.end()
+            startAsyncIterator(stream, iter)
         }
     } else {
         fn = (call: grpc.ServerUnaryCall<any>, callback: grpc.sendUnaryData<any>) => {
