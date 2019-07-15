@@ -11,9 +11,9 @@ describe('test', function() {
     let node1: EtcdMesh, node2a: EtcdMesh, node2b: EtcdMesh
     before(async () => {
         [node1, node2a, node2b] = await Promise.all([
-            new EtcdMesh({ }, API1).init(),
-            new EtcdMesh({ }, API2).init(),
-            new EtcdMesh({ }, API2).init(),
+            new EtcdMesh().register(API1).init(),
+            new EtcdMesh().register(API2).init(),
+            new EtcdMesh().register(API2).init(),
         ])
         api1 = node2a.query(API1)
         api2 = node1.query(API2)

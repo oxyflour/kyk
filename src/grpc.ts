@@ -123,7 +123,7 @@ export class GrpcServer {
         const opts = config || loadTsConfig(path.join(__dirname, '..', 'tsconfig.json')),
             decl = typeof api === 'string' ? api : `${api.__filename}`,
             mod  = typeof api === 'string' ? require(api).default : api,
-            types = decl && getProtoObject(decl, mod, opts)
+            types = getProtoObject(decl, mod, opts)
         return wrapFunc(mod, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
                 [{ receiver, target }] = stack,

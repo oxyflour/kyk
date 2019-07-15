@@ -7,7 +7,7 @@ import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 import { ApiDefinition, asyncCache, weightedRandom } from './utils'
 import { GrpcServer, GrpcClient } from './grpc'
 
-export const DEFAULT_MESH_OPTS = {
+const DEFAULT_MESH_OPTS = {
     nodeName: '',
     etcdPrefix: 'etcd-mesh/',
     etcdOpts: {
@@ -24,6 +24,8 @@ export const DEFAULT_MESH_OPTS = {
     listenAddr: '0.0.0.0',
 }
 
+export type MeshOptions = typeof DEFAULT_MESH_OPTS
+
 export interface CallTarget {
     host: string
     hash: string
@@ -37,14 +39,14 @@ export interface CallEntry {
 }
 
 export default class EtcdMesh extends EventEmitter {
-    readonly opts: typeof DEFAULT_MESH_OPTS
+    readonly opts: MeshOptions
     private readonly etcd: Etcd3
     private readonly namespace: Namespace
     private readonly lease: Lease
     private readonly client: GrpcClient
     private readonly server: GrpcServer
 
-    constructor(opts = { } as Partial<typeof DEFAULT_MESH_OPTS>, private api = { } as ApiDefinition) {
+    constructor(opts = { } as Partial<MeshOptions>) {
         super()
         this.opts = { ...DEFAULT_MESH_OPTS, ...opts }
         this.etcd = new Etcd3(this.opts.etcdOpts)
@@ -61,8 +63,6 @@ export default class EtcdMesh extends EventEmitter {
     init = asyncCache(async () => {
         this.opts.nodeName = this.opts.nodeName || Math.random().toString(16).slice(2, 10)
         this.opts.listenPort = this.opts.listenPort || await getPort({ port: this.opts.listenPort })
-
-        this.server.register(this.api)
         this.server.start(`${this.opts.listenAddr}:${this.opts.listenPort}`, this.opts.grpcOpts)
 
         await this.poll()
@@ -141,6 +141,14 @@ export default class EtcdMesh extends EventEmitter {
 
     query<T extends ApiDefinition>(api = { } as T) {
         return this.client.query(api)
+    }
+
+    register<T extends ApiDefinition>(api: string | T) {
+        return this.server.register(api), this
+    }
+
+    get entries() {
+        return Object.keys(this.server.methods)
     }
 
     private async destroyEtcd() {
