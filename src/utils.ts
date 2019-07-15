@@ -1,5 +1,13 @@
 import crypto from 'crypto'
 
+export function weightedRandom(weights: number[]) {
+    let i = 0, v = Math.random() * weights.reduce((a, b) => a + b, 0)
+    while (i < weights.length && v > weights[i]) {
+        v -= weights[i ++]
+    }
+    return i
+}
+
 export function md5(str: string) {
     return crypto.createHash('md5').update(str).digest('hex')
 }

@@ -4,9 +4,7 @@ import { KeyCertPair } from 'grpc'
 import { EventEmitter } from 'events'
 import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
-import weightedRandom = require('weighted-random')
-
-import { ApiDefinition, asyncCache } from './utils'
+import { ApiDefinition, asyncCache, weightedRandom } from './utils'
 import { GrpcServer, GrpcClient } from './grpc'
 
 export const DEFAULT_MESH_OPTS = {
