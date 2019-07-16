@@ -193,21 +193,17 @@ export class GrpcClient {
     private clients = { } as { [key: string]: grpc.Client }
     private call(entry: string, args: any[]) {
         let proxy: AsyncIterableIterator<any>
-        const cbs = { resolve: ((_: any) => 0), reject: ((_: any) => 0) },
-            promise = new Promise((resolve, reject) => Object.assign(cbs, { resolve, reject })),
-            iter = promise as any,
-            cache = this.clients
+        const cache = this.clients
         // for async functions
-        const start = async () => {
+        const then = async (resolve: Function, reject: Function) => {
             try {
                 const { host, proto } = await this.select(entry),
                     ret = callService(entry, host, args, proto, cache)
-                cbs.resolve(ret)
+                resolve(ret)
             } catch (err) {
-                cbs.reject(err)
+                reject(err)
             }
         }
-        promise.then = (...args) => start() && Promise.prototype.then.apply(promise, args) as any
         // for async iterators
         const next = async () => {
             if (!proxy) {
@@ -217,8 +213,7 @@ export class GrpcClient {
             }
             return await proxy.next()
         }
-        iter[Symbol.asyncIterator] = () => ({ next })
-        return promise
+        return { then, [Symbol.asyncIterator]: () => ({ next }) }
     }
 
     query<T extends ApiDefinition>(def = { } as T) {
