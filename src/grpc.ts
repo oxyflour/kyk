@@ -8,7 +8,7 @@ import { EventIterator } from 'event-iterator'
 import * as protobuf from 'protobufjs'
 
 import { getProtoObject } from './parser'
-import { ApiDefinition, wrapFunc, md5, hookFunc, asyncCache } from './utils'
+import { ApiDefinition, wrapFunc, md5, hookFunc, asyncCache, AsyncFunction, AsyncIteratorFunction } from './utils'
 
 const QUERY_PROTO = require(path.join(__dirname, '..', 'proto.json')),
     QUERY_SERVICE = '_query_proto'
@@ -89,7 +89,7 @@ export function callService(entry: string, host: string, args: any[], proto: any
 }
 
 export function makeService(entry: string,
-        func: (...args: any[]) => Promise<any> | AsyncIterableIterator<any>, proto: any) {
+        func: AsyncFunction<any> | AsyncIteratorFunction<any>, proto: any) {
     const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
         funcName = path.basename(entry),
         root = (protobuf as any).Root.fromJSON(proto),
@@ -136,6 +136,20 @@ export interface GrpcOptions {
     checkClientCertificate?: boolean,
 }
 
+export interface GrpcContext {
+    server: GrpcServer
+    entry: string
+    func: Function
+    call: any
+    callback?: any
+    err?: any
+    ret?: any
+}
+
+export interface GrpcMiddleware {
+    (ctx: GrpcContext, next: AsyncFunction<any>): Promise<any>
+}
+
 export class GrpcServer {
     constructor(private readonly server = new grpc.Server()) {
         const proto = async (entry: string) => JSON.stringify(this.methods[entry].proto),
@@ -151,6 +165,36 @@ export class GrpcServer {
         this.server.bind(addr, credentials)
         this.server.start()
     }
+
+    private middlewares = [ ] as GrpcMiddleware[]
+    use(middleware: GrpcMiddleware) {
+        this.middlewares.push(middleware)
+        return this
+    }
+
+    private async call(ctx: GrpcContext, middlewares: GrpcMiddleware[]): Promise<any> {
+        const [current, ...rest] = middlewares
+        if (current) {
+            await current(ctx, () => this.call(ctx, rest))
+        } else {
+            ctx.func(ctx.call, (err?: any, ret?: any) => {
+                ctx.err = err
+                ctx.ret = ret
+                ctx.callback && ctx.callback(err, ret)
+            })
+        }
+    }
+
+    private warp(entry: string, func: Function) {
+        const server = this
+        return (call: any, callback?: any) => {
+            if (this.middlewares.length) {
+                this.call({ entry, server, func, call, callback }, this.middlewares)
+            } else {
+                func(call, callback)
+            }
+        }
+    }
     
     readonly methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
     register<T extends ApiDefinition>(api: T | string, config?: ts.CompilerOptions) {
@@ -164,6 +208,9 @@ export class GrpcServer {
                 func = target.bind(receiver),
                 { proto, service, impl } = makeService(entry, func, types),
                 hash = md5(JSON.stringify(proto))
+            for (const key of Object.keys(impl)) {
+                impl[key] = this.warp(entry, impl[key])
+            }
             this.methods[entry] = { func, proto, hash }
             this.server.addService(service, impl)
             return func

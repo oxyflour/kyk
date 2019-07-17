@@ -37,6 +37,26 @@ describe('test', function() {
         assert.equal(await api1.map['node1'].ok(), 'node1 ok')
     })
 
+    it(`use middleware`, async () => {
+        const ret = [] as any[]
+        node1.use(async (ctx, next) => {
+            ret.push({ name: '1', args: ctx.call.request })
+            await next()
+            ret.push({ name: '4', ret: ctx.ret })
+        }).use(async (ctx, next) => {
+            ret.push({ name: '2', args: ctx.call.request })
+            await next()
+            ret.push({ name: '3', ret: ctx.ret })
+        })
+        assert.equal(await api1.testSimple('that'), 'test pass that')
+        assert.deepEqual(ret, [
+            { name: '1', args: { you: 'that' } },
+            { name: '2', args: { you: 'that' } },
+            { name: '3', ret: { result: 'test pass that' } },
+            { name: '4', ret: { result: 'test pass that' } }
+        ])
+    })
+
     it(`call with array`, async () => {
         assert.deepEqual(await api2.testArray([5]), [6])
     })

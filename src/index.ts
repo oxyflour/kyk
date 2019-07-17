@@ -5,7 +5,7 @@ import { EventEmitter } from 'events'
 import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
 import { ApiDefinition, asyncCache, weightedRandom } from './utils'
-import { GrpcServer, GrpcClient } from './grpc'
+import { GrpcServer, GrpcClient, GrpcMiddleware } from './grpc'
 
 const DEFAULT_MESH_OPTS = {
     nodeName: '',
@@ -145,6 +145,10 @@ export default class KyokoMesh extends EventEmitter {
 
     register<T extends ApiDefinition>(api: string | T) {
         return this.server.register(api), this
+    }
+
+    use(middleware: GrpcMiddleware) {
+        return this.server.use(middleware), this
     }
 
     get entries() {

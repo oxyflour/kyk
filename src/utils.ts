@@ -20,9 +20,9 @@ export function asyncCache<R, F extends (...args: any[]) => Promise<R>>(fn: F) {
     }) as F
 }
 
-type ReturnPromise<T> = (...args: any[]) => Promise<T>
-type ReturnAsyncIterator<T> = (...args: any[]) => AsyncIterableIterator<T>
-export interface ApiDefinition { [name: string]: string | ReturnAsyncIterator<any> | ReturnPromise<any> | ApiDefinition }
+export type AsyncFunction<T> = (...args: any[]) => Promise<T>
+export type AsyncIteratorFunction<T> = (...args: any[]) => AsyncIterableIterator<T>
+export interface ApiDefinition { [name: string]: string | AsyncIteratorFunction<any> | AsyncFunction<any> | ApiDefinition }
 
 export interface ProxyStackItem {
     target: any,
