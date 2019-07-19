@@ -9,35 +9,35 @@ describe('test', function() {
     this.timeout(60000)
 
     const node1 = new Mesh().register(API1),
-        node2a = new Mesh().register(API2),
-        node2b = new Mesh().register(API2),
-        api1 = node2a.query(API1),
+        node2 = new Mesh().register(API2),
+        node3 = new Mesh().register(API2),
+        api1 = node2.query(API1),
         api2 = node1.query(API2)
     before(async () => {
-        await Promise.all([node1.init(), node2a.init(), node2b.init()])
+        await Promise.all([node1.init(), node2.init()])
     })
 
-    it(`simple async function`, async () => {
+    it(`should work with simple async function`, async () => {
         assert.equal(await api1.testSimple('this'), 'test pass this')
     })
 
-    it(`this within function`, async () => {
+    it(`should work with this within function`, async () => {
         assert.equal(await api1.testThis(), 'this test pass this')
     })
 
-    it(`nested function within object`, async () => {
+    it(`should work with nested function within object`, async () => {
         assert.equal(await api1.testNested(), 'nested nesteded test pass nested')
     })
 
-    it(`nested function within object2`, async () => {
+    it(`should work with nested function within object2`, async () => {
         assert.equal(await api1.nested.method(), 'nested')
     })
 
-    it(`call indiced function`, async () => {
+    it(`should call indiced function`, async () => {
         assert.equal(await api1.map['node1'].ok(), 'node1 ok')
     })
 
-    it(`use middleware`, async () => {
+    it(`should work with middleware`, async () => {
         const ret = [] as any[]
         node1.use(async (ctx, next) => {
             ret.push({ name: '1', args: ctx.call.request })
@@ -57,11 +57,11 @@ describe('test', function() {
         ])
     })
 
-    it(`call with array`, async () => {
+    it(`should work with array`, async () => {
         assert.deepEqual(await api2.testArray([5]), [6])
     })
 
-    it(`call with wrong type`, async () => {
+    it(`should throw error with wrong argument type`, async () => {
         try {
             await api2.testArray('x' as any)
         } catch (err) {
@@ -69,15 +69,15 @@ describe('test', function() {
         }
     })
 
-    it(`call with map`, async () => {
+    it(`should work with map`, async () => {
         assert.deepEqual(await api2.testMap(), { name: 1 })
     })
 
-    it(`call with void`, async () => {
+    it(`should work with void return value`, async () => {
         assert.equal(await api2.testVoid(), undefined)
     })
 
-    it(`call with exception`, async () => {
+    it(`should throw some exception`, async () => {
         try {
             await api2.throwSomeError()
         } catch (err) {
@@ -85,12 +85,12 @@ describe('test', function() {
         }
     })
 
-    it(`call with partial class`, async () => {
+    it(`should work with partial class`, async () => {
         assert.deepEqual(await api2.testClass({ }), { a: 2, b: 'b', c: [ ] })
         assert.deepEqual(await api2.testClass({ a: 1, c: ['c'] }), { a: 1, b: 'b', c: ['c'] })
     })
 
-    it(`call with default parameters`, async () => {
+    it(`should work with default parameters`, async () => {
         assert.equal(await api2.testDefaultParameters(1), '1x')
         assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
     })
@@ -114,9 +114,9 @@ describe('test', function() {
         assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
     })
 
-    it(`call with new node`, async () => {
-        await node2a.destroy(0)
-        await new Promise(resolve => setTimeout(resolve, 2000))
+    it(`should work with new joined node`, async () => {
+        await node2.destroy(0)
+        await node3.init()
         assert.equal(await api2.testDefaultParameters(1), '1x')
         assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
     })
@@ -124,7 +124,7 @@ describe('test', function() {
     after(async () => {
         await Promise.all([
             node1.destroy(0),
-            node2b.destroy(0),
+            node3.destroy(0),
         ])
     })
 })

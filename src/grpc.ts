@@ -99,32 +99,38 @@ export function makeService(entry: string,
         fields = proto.nested[requestType].fields,
         argKeys = Object.keys(fields).sort((a, b) => fields[a].id - fields[b].id),
         makeArgs = (request: any) => argKeys.map(key => request[key])
-    let fn: Function
+    let fn: AsyncFunction<any>
     if (requestStream && responseStream) {
         fn = (stream: grpc.ServerDuplexStream<any, any>) => {
             const arg = makeAsyncIterator(stream),
                 iter = func(arg) as AsyncIterableIterator<any>
-            startAsyncIterator(stream, iter)
+            return startAsyncIterator(stream, iter)
         }
     } else if (requestStream) {
-        fn = (stream: grpc.ServerReadableStream<any>, callback: grpc.sendUnaryData<any>) => {
-            const arg = makeAsyncIterator(stream),
-                promise = func(arg) as Promise<any>
-            promise
-                .then(result => callback(null, { result }))
-                .catch(error => callback(error, null))
+        fn = async (stream: grpc.ServerReadableStream<any>, callback: grpc.sendUnaryData<any>) => {
+            try {
+                const arg = makeAsyncIterator(stream),
+                    result = await func(arg) as Promise<any>
+                callback(null, { result });
+            }
+            catch (error) {
+                callback(error, null);
+            }
         }
     } else if (responseStream) {
         fn = (stream: grpc.ServerWriteableStream<any>) => {
             const iter = func(...makeArgs(stream.request)) as AsyncIterableIterator<any>
-            startAsyncIterator(stream, iter)
+            return startAsyncIterator(stream, iter)
         }
     } else {
-        fn = (call: grpc.ServerUnaryCall<any>, callback: grpc.sendUnaryData<any>) => {
-            const promise = func(...makeArgs(call.request)) as Promise<any>
-            promise
-                .then(result => callback(null, { result }))
-                .catch(error => callback(error, null))
+        fn = async (call: grpc.ServerUnaryCall<any>, callback: grpc.sendUnaryData<any>) => {
+            try {
+                const result = await func(...makeArgs(call.request)) as Promise<any>
+                return callback(null, { result });
+            }
+            catch (error) {
+                return callback(error, null);
+            }
         }
     }
     return { proto, service, impl: { [funcName]: fn } }
@@ -139,7 +145,7 @@ export interface GrpcOptions {
 export interface GrpcContext {
     server: GrpcServer
     entry: string
-    func: Function
+    func: AsyncFunction<any>
     call: any
     callback?: any
     err?: any
@@ -177,7 +183,7 @@ export class GrpcServer {
         if (current) {
             await current(ctx, () => this.call(ctx, rest))
         } else {
-            ctx.func(ctx.call, (err?: any, ret?: any) => {
+            await ctx.func(ctx.call, (err?: any, ret?: any) => {
                 ctx.err = err
                 ctx.ret = ret
                 ctx.callback && ctx.callback(err, ret)
@@ -185,9 +191,9 @@ export class GrpcServer {
         }
     }
 
-    private warp(entry: string, func: Function) {
+    private warp(entry: string, func: AsyncFunction<any>) {
         const server = this
-        return (call: any, callback?: any) => {
+        return async (call: any, callback?: any) => {
             if (this.middlewares.length) {
                 this.call({ entry, server, func, call, callback }, this.middlewares)
             } else {
