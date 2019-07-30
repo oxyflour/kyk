@@ -11,7 +11,7 @@ const DEFAULT_MESH_OPTS = {
     nodeName: '',
     etcdPrefix: 'etcd-mesh/',
     etcdOpts: {
-        hosts: ['http://localhost:2379']
+        hosts: [process.env.KYKM_ETCD_URL || 'http://localhost:2379']
     } as IOptions,
     etcdLease: 10,
     announceInterval: 5,
