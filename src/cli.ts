@@ -8,17 +8,17 @@ const pkg = require(path.join(__dirname, '..', 'package.json')),
     { env } = process,
     opts = { } as MeshOptions
 
-env.KYKMSH_ETCD_OPTS && (opts.etcdOpts = JSON.parse(env.KYKMSH_ETCD_OPTS))
-env.KYKMSH_GRPC_OPTS && (opts.grpcOpts = JSON.parse(env.KYKMSH_GRPC_OPTS))
+env.KYKM_ETCD_OPTS && (opts.etcdOpts = JSON.parse(env.KYKM_ETCD_OPTS))
+env.KYKM_GRPC_OPTS && (opts.grpcOpts = JSON.parse(env.KYKM_GRPC_OPTS))
 
 prog.version(pkg.version)
     .command('serve [mods...]')
-    .option('-n, --node-name <name>', 'mesh node name', undefined, env.KYKMSH_NODE_NAME)
-    .option('-s, --announce-interval <seconds>', 'announce interval', parseInt, env.KYKMSH_ANNOUNCE_INTERVAL)
-    .option('-e, --etcd-prefix <prefix>', 'etcd prefix', undefined, env.KYKMSH_ETCD_PREFIX)
-    .option('-s, --etcd-lease <seconds>', 'etcd lease', parseInt, env.KYKMSH_ETCD_LEASE)
-    .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', undefined, env.KYKMSH_LISTEN_ADDR)
-    .option('-p, --listen-port <port>', 'listen port, default random', parseInt, env.KYKMSH_LISTEN_PORT)
+    .option('-n, --node-name <name>', 'mesh node name', undefined, env.KYKM_NODE_NAME)
+    .option('-s, --announce-interval <seconds>', 'announce interval', parseInt, env.KYKM_ANNOUNCE_INTERVAL)
+    .option('-e, --etcd-prefix <prefix>', 'etcd prefix', undefined, env.KYKM_ETCD_PREFIX)
+    .option('-s, --etcd-lease <seconds>', 'etcd lease', parseInt, env.KYKM_ETCD_LEASE)
+    .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', undefined, env.KYKM_LISTEN_ADDR)
+    .option('-p, --listen-port <port>', 'listen port, default random', parseInt, env.KYKM_LISTEN_PORT)
     .action(async (mods, args) => {
         try {
             require('ts-node/register')
@@ -37,11 +37,12 @@ prog.version(pkg.version)
     })
 
 prog.command('call <method> [args...]')
-    .action(async (method: string, args: string[]) => {
+    .option('-e, --etcd-prefix <prefix>', 'etcd prefix', undefined, env.KYKM_ETCD_PREFIX)
+    .action(async (method: string, pars: string[], args) => {
         try {
-            const api = new Mesh(opts).query() as any,
+            const api = new Mesh({ ...opts, ...args }).query() as any,
                 fn = method.split('.').reduce((fn, name) => fn[name], api),
-                ret = await fn(...args.map(item => JSON.parse(item)))
+                ret = await fn(...pars.map(item => JSON.parse(item)))
             console.log(JSON.stringify(ret, null, 4))
             process.exit(0)
         } catch (err) {

@@ -9,7 +9,7 @@ import { GrpcServer, GrpcClient, GrpcMiddleware } from './grpc'
 
 const DEFAULT_MESH_OPTS = {
     nodeName: '',
-    etcdPrefix: 'etcd-mesh/',
+    etcdPrefix: process.env.KYKM_ETCD_PREFIX || 'etcd-mesh/',
     etcdOpts: {
         hosts: [process.env.KYKM_ETCD_URL || 'http://localhost:2379']
     } as IOptions,
