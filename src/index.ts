@@ -29,6 +29,7 @@ export type MeshOptions = typeof DEFAULT_MESH_OPTS
 export interface CallTarget {
     host: string
     hash: string
+    name: string
     weight?: number
 }
 
@@ -96,8 +97,8 @@ export default class KyokoMesh extends EventEmitter {
                 ...toDel.map(entry => this.namespace.delete()
                     .key(`rpc-entry/${entry}/$/${name}`).exec()) as Promise<any>[],
                 ...toPut.map(([entry, { hash }]) => this.lease.put(`rpc-entry/${entry}/$/${name}`)
-                    .value(JSON.stringify({ host, hash } as CallTarget)).exec()) as Promise<any>[],
-                ...toPut.map(([, { hash, proto }]) => this.lease.put(`rpc-proto/${hash}`)
+                    .value(JSON.stringify({ name, host, hash } as CallTarget)).exec()) as Promise<any>[],
+                ...toPut.map(([, { hash, proto }]) => this.lease.put(`rpc-proto/${hash}/${name}`)
                     .value(JSON.stringify(proto)).exec()) as Promise<any>[],
             ])
             this.announced = { ...methods }
@@ -134,8 +135,8 @@ export default class KyokoMesh extends EventEmitter {
             throw Error(`no targets found for entry ${entry}`)
         }
         const cache = this.protos,
-            { host, hash } = selected,
-            proto = await (cache[hash] || (cache[hash] = this.namespace.get(`rpc-proto/${hash}`).json()))
+            { name, host, hash } = selected,
+            proto = await (cache[hash] || (cache[hash] = this.namespace.get(`rpc-proto/${hash}/${name}`).json()))
         return { host, proto }
     }
 
@@ -144,7 +145,13 @@ export default class KyokoMesh extends EventEmitter {
     }
 
     register<T extends ApiDefinition>(api: string | T) {
-        return this.server.register(api), this
+        const exp  = typeof api === 'string' ? require(api).default : api,
+            mod = typeof exp === 'function' ? exp(this) : exp,
+            decl = typeof api === 'string' ? api : `${mod.__filename}`
+        if (!decl) {
+            throw Error(`the argument should be the module path or an object containing __filename attribute`)
+        }
+        return this.server.register(mod, decl), this
     }
 
     use(middleware: GrpcMiddleware) {

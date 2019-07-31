@@ -14,7 +14,6 @@ export class A {
 }
 
 export default {
-    __filename,
     async testArray(arg: number[]) {
         return arg.map(num => num + 1)
     },

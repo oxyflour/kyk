@@ -1,12 +1,13 @@
-export default (id = 'xx') => ({
-    __filename,
+import Mesh from '../'
+
+export default (node: Mesh) => ({
     async testSimple(you: string) {
         return 'test pass ' + you
     },
     map: {
-        [id]: {
+        [node.opts.nodeName]: {
             async ok() {
-                return id + ' ok'
+                return node.opts.nodeName + ' ok'
             }
         }
     },

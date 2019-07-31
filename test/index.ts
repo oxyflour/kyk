@@ -1,18 +1,21 @@
+import path from 'path'
 import * as assert from 'assert'
 
 import Mesh from '../src'
-import mkAPI1 from './api1'
-import API2 from './api2'
+import Api1 from './api1'
+import Api2 from './api2'
 
-const API1 = mkAPI1('node1')
+const mod1 = path.join(__dirname, 'api1'),
+    mod2 = path.join(__dirname, 'api2')
+
 describe('test', function() {
     this.timeout(60000)
 
-    const node1 = new Mesh().register(API1),
-        node2 = new Mesh().register(API2),
-        node3 = new Mesh().register(API2),
-        api1 = node2.query(API1),
-        api2 = node1.query(API2)
+    const node1 = new Mesh({ nodeName: 'node1' }).register(mod1),
+        node2 = new Mesh().register(mod2),
+        node3 = new Mesh().register(mod2),
+        api1 = node2.query<ReturnType<typeof Api1>>(),
+        api2 = node1.query<typeof Api2>()
     before(async () => {
         await Promise.all([node1.init(), node2.init()])
     })

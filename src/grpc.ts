@@ -157,10 +157,18 @@ export interface GrpcMiddleware {
 }
 
 export class GrpcServer {
-    constructor(private readonly server = new grpc.Server()) {
-        const proto = async (entry: string) => JSON.stringify(this.methods[entry].proto),
-            { service, impl } = makeService(QUERY_SERVICE, proto, QUERY_PROTO)
-        server.addService(service, impl)
+    constructor() {
+    }
+
+    private cachedServer = null as null | grpc.Server
+    private get server() {
+        if (!this.cachedServer) {
+            const proto = async (entry: string) => JSON.stringify(this.methods[entry].proto),
+                { service, impl } = makeService(QUERY_SERVICE, proto, QUERY_PROTO),
+                server = this.cachedServer = new grpc.Server()
+            server.addService(service, impl)
+        }
+        return this.cachedServer
     }
 
     start(addr: string, opts = { } as GrpcOptions) {
@@ -203,10 +211,8 @@ export class GrpcServer {
     }
     
     readonly methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
-    register<T extends ApiDefinition>(api: T | string, config?: ts.CompilerOptions) {
+    register<T extends ApiDefinition>(mod: T, decl: string, config?: ts.CompilerOptions) {
         const opts = config || loadTsConfig(path.join(__dirname, '..', 'tsconfig.json')),
-            decl = typeof api === 'string' ? api : `${api.__filename}`,
-            mod  = typeof api === 'string' ? require(api).default : api,
             types = getProtoObject(decl, mod, opts)
         return wrapFunc(mod, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
@@ -224,8 +230,10 @@ export class GrpcServer {
     }
 
     async destroy(waiting = 30) {
-        setTimeout(() => this.server.forceShutdown(), waiting * 1000)
-        await new Promise(resolve => this.server.tryShutdown(resolve))
+        if (this.cachedServer) {
+            setTimeout(() => this.server.forceShutdown(), waiting * 1000)
+            await new Promise(resolve => this.server.tryShutdown(resolve))
+        }
     }
 }
 
@@ -245,9 +253,8 @@ export class GrpcClient {
 
     private clients = { } as { [key: string]: grpc.Client }
     private call(entry: string, args: any[]) {
-        let proxy: AsyncIterableIterator<any>
-        const cache = this.clients
         // for async functions
+        const cache = this.clients
         const then = async (resolve: Function, reject: Function) => {
             try {
                 const { host, proto } = await this.select(entry),
@@ -258,6 +265,7 @@ export class GrpcClient {
             }
         }
         // for async iterators
+        let proxy: AsyncIterableIterator<any>
         const next = async () => {
             if (!proxy) {
                 const { host, proto } = await this.select(entry),
