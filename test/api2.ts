@@ -29,6 +29,9 @@ export default {
             return 0
         }
     },
+    async testBuffer(buf: Buffer) {
+        return Buffer.from('ret ' + buf.toString())
+    },
     async testClass(a: Partial<A>) {
         return a
     },

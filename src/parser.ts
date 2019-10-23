@@ -33,6 +33,7 @@ export class ExportFunc {
 export type ExportType = string | ExportFunc | ExportObject | ExportArray | ExportMap
 
 const RENAME_TYPES = {
+    buffer: 'bytes',
     string: 'string',
     number: 'float',
     boolean: 'bool',
@@ -81,6 +82,8 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                 throw Error(`nested maps are not supported, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
             }
             return new ExportMap('string', valType)
+        } else if ((type.flags & ts.TypeFlags.Object) && type.symbol && type.symbol.escapedName === 'Buffer') {
+            return 'buffer'
         } else if ((type.flags & ts.TypeFlags.Object) && numberIndexed) {
             const valType = parseExportType(numberIndexed, next)
             if (valType instanceof ExportMap) {

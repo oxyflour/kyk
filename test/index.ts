@@ -64,6 +64,10 @@ describe('test', function() {
         assert.deepEqual(await api2.testArray([5]), [6])
     })
 
+    it(`should work with buffer`, async () => {
+        assert.deepEqual(await api2.testBuffer(Buffer.from('you')), Buffer.from('ret you'))
+    })
+
     it(`should throw error with wrong argument type`, async () => {
         try {
             await api2.testArray('x' as any)
