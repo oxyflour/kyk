@@ -57,7 +57,7 @@ prog.command('start [mods...]')
                 const src = require.resolve(path.resolve(mod), { paths: [cwd] })
                 server.register(require(src).default, src)
             }
-            server.start(`${args.listenAddr}:${args.listenPort}`)
+            server.start(`${args.listenAddr}:${args.listenPort}`, opts.grpcOpts)
             console.log(`grpc server started at ${args.listenAddr}:${args.listenPort}`)
         } catch (err) {
             console.error(err)
