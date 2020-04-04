@@ -5,9 +5,9 @@ import { EventEmitter } from 'events'
 import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
 import { ApiDefinition, asyncCache, weightedRandom } from './utils'
-import { GrpcServer, GrpcClient, GrpcMiddleware } from './grpc'
+import { GrpcServer, GrpcClient, GrpcMiddleware, GrpcContext } from './grpc'
 
-export { GrpcServer, GrpcClient }
+export { GrpcServer, GrpcClient, GrpcMiddleware, GrpcContext }
 
 const DEFAULT_MESH_OPTS = {
     nodeName: '',

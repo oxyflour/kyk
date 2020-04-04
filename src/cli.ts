@@ -20,6 +20,7 @@ prog.version(pkg.version)
     .option('-s, --etcd-lease <seconds>', 'etcd lease', parseInt, env.KYKM_ETCD_LEASE)
     .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', undefined, env.KYKM_LISTEN_ADDR)
     .option('-p, --listen-port <port>', 'listen port, default random', parseInt, env.KYKM_LISTEN_PORT)
+    .option('-m, --middleware <file>', 'middleware path', (val, all) => all.concat(val), [])
     .option('-P, --project <file>', 'tsconfig.json path')
     .action(async (mods, args) => {
         try {
@@ -31,6 +32,10 @@ prog.version(pkg.version)
                 cwd = process.cwd()
             for (const mod of mods) {
                 node.register(require.resolve(path.resolve(mod), { paths: [cwd] }))
+            }
+            for (const mod of args.middleware) {
+                const src = require.resolve(path.resolve(mod), { paths: [cwd] })
+                node.use(require(src).default)
             }
             await node.init()
             const { listenAddr, listenPort, nodeName } = node.opts
@@ -44,6 +49,7 @@ prog.version(pkg.version)
 prog.command('start [mods...]')
     .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', val => val, env.KYKM_LISTEN_ADDR || '0.0.0.0')
     .option('-p, --listen-port <port>', 'listen port, default 5000', parseInt, env.KYKM_LISTEN_PORT || 5000)
+    .option('-m, --middleware <file>', 'middleware path', (val, all) => all.concat(val), [])
     .option('-P, --project <file>', 'tsconfig.json path')
     .action(async (mods, args) => {
         try {
@@ -56,6 +62,10 @@ prog.command('start [mods...]')
             for (const mod of mods) {
                 const src = require.resolve(path.resolve(mod), { paths: [cwd] })
                 server.register(require(src).default, src)
+            }
+            for (const mod of args.middleware) {
+                const src = require.resolve(path.resolve(mod), { paths: [cwd] })
+                server.use(require(src).default)
             }
             server.start(`${args.listenAddr}:${args.listenPort}`, opts.grpcOpts)
             console.log(`grpc server started at ${args.listenAddr}:${args.listenPort}`)
