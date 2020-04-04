@@ -1,5 +1,5 @@
-import path from 'path'
 import ts from 'typescript'
+import { getSrvFuncName } from './utils';
 
 // FIXME: internal in typescript
 interface IntrinsicType extends ts.Type { intrinsicName: string }
@@ -101,17 +101,17 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                 [parent] = stack,
                 isParentPartial = parent && parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial'
             let id = 1
-            symbol.members.forEach(symbol => {
+            for (const symbol of type.getProperties()) {
                 const isFuncion = symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)
                 if (symbol.valueDeclaration && !(isClass && isFuncion)) {
                     const decl = symbol.valueDeclaration as ts.PropertyDeclaration,
                         initializer = decl.initializer && ts.transpile(decl.initializer.getFullText()),
-                        type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
-                        member = parseExportType(type, next),
+                        memberType = (symbol as any).type || checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
+                        member = parseExportType(memberType, next),
                         required = !isParentPartial && !decl.questionToken
                     result[symbol.escapedName.toString()] = { id: id ++, member, initializer, required }
                 }
-            })
+            }
             return new ExportObject(result)
         } else if (symbol && symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)) {
             const signatures = type.getCallSignatures()
@@ -144,7 +144,8 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                 if (returnType.symbol && returnType.symbol.escapedName === 'Promise' && returnType.typeArguments) {
                     const [ret] = returnType.typeArguments as TypeReferenceType[]
                     return new ExportFunc(argsType, parseExportType(ret, next), { requestStream, responseStream: false })
-                } else if (returnType.symbol && returnType.symbol.escapedName === 'AsyncIterableIterator' && returnType.typeArguments) {
+                } else if (returnType.symbol && returnType.typeArguments &&
+                        (returnType.symbol.escapedName === 'AsyncIterableIterator' || returnType.symbol.escapedName === 'AsyncGenerator')) {
                     let [ret] = returnType.typeArguments as TypeReferenceType[]
                     return new ExportFunc(argsType, parseExportType(ret, next), { requestStream, responseStream: true })
                 } else {
@@ -210,8 +211,7 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
 
     function walk(entry: string, type: ExportType) {
         if (type instanceof ExportFunc) {
-            const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
-                funcName = path.basename(entry),
+            const [srvName, funcName] = getSrvFuncName(entry),
                 requestType = `${srvName}KykReq`,
                 responseType = `${srvName}KykRes`,
                 methods = { [funcName]: { requestType, responseType, ...type.opts } }

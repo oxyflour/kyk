@@ -1,7 +1,7 @@
 import path from 'path'
 import * as assert from 'assert'
 
-import Mesh from '../src'
+import Mesh from '../../src'
 import Api1 from './api1'
 import Api2 from './api2'
 
@@ -38,6 +38,11 @@ describe('test', function() {
 
     it(`should call indiced function`, async () => {
         assert.equal(await api1.map['node1'].ok(), 'node1 ok')
+    })
+
+    it(`should work with generics`, async () => {
+        assert.deepEqual(await api1.testGenericArray(), [0])
+        assert.deepEqual(await api1.testGenericMap(), { a: 0, b: '' })
     })
 
     it(`should work with middleware`, async () => {

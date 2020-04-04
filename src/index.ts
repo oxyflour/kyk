@@ -7,6 +7,8 @@ import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 import { ApiDefinition, asyncCache, weightedRandom } from './utils'
 import { GrpcServer, GrpcClient, GrpcMiddleware } from './grpc'
 
+export { GrpcServer, GrpcClient }
+
 const DEFAULT_MESH_OPTS = {
     nodeName: '',
     etcdPrefix: process.env.KYKM_ETCD_PREFIX || 'etcd-mesh/',

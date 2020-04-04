@@ -1,15 +1,9 @@
-import crypto from 'crypto'
-
 export function weightedRandom(weights: number[]) {
     let i = 0, v = Math.random() * weights.reduce((a, b) => a + b, 0)
     while (i < weights.length && v > weights[i]) {
         v -= weights[i ++]
     }
     return i
-}
-
-export function md5(str: string) {
-    return crypto.createHash('md5').update(str).digest('hex')
 }
 
 export function asyncCache<R, F extends (...args: any[]) => Promise<R>>(fn: F) {
@@ -58,5 +52,49 @@ export function wrapFunc<M extends ApiDefinition>(
             ret[propKey] = wrapFunc(target as ApiDefinition, callback, next)
         }
         return ret
+    }
+}
+
+export function getSrvFuncName(entry: string) {
+    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
+        funcName = entry.split('/').pop() || ''
+    return [srvName, funcName]
+}
+
+export const metaQuery = {
+    entry: '_query_proto',
+    proto: {
+        nested: {
+            Srv_query_proto: {
+                methods: {
+                    _query_proto: {
+                        requestType: "Srv_query_protoKykReq",
+                        responseType: "Srv_query_protoKykRes"
+                    }
+                }
+            },
+            Srv_query_protoKykReq: {
+                fields: {
+                    entry: {
+                        id: 1,
+                        options: {},
+                        rule: "required",
+                        type: "string"
+                    }
+                },
+                nested: {}
+            },
+            Srv_query_protoKykRes: {
+                fields: {
+                    result: {
+                        id: 1,
+                        options: {},
+                        rule: "required",
+                        type: "string"
+                    }
+                },
+                nested: {}
+            }
+        }
     }
 }

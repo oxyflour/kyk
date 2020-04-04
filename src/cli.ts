@@ -2,7 +2,7 @@
 
 import path from 'path'
 import prog from 'commander'
-import Mesh, { MeshOptions } from './'
+import Mesh, { MeshOptions, GrpcServer } from './'
 
 const pkg = require(path.join(__dirname, '..', 'package.json')),
     { env } = process,
@@ -25,7 +25,7 @@ prog.version(pkg.version)
             const node = new Mesh({ ...opts, ...args }),
                 cwd = process.cwd()
             for (const mod of mods) {
-                node.register(require.resolve(mod, { paths: [cwd] }))
+                node.register(require.resolve(path.resolve(mod), { paths: [cwd] }))
             }
             await node.init()
             const { listenAddr, listenPort, nodeName } = node.opts
@@ -51,11 +51,30 @@ prog.command('call <method> [args...]')
         }
     })
 
-prog.command('*')
-    .action(() => {
-        prog.outputHelp()
-        process.exit(1)
+prog.command('start [mods...]')
+    .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', val => val, env.KYKM_LISTEN_ADDR || '0.0.0.0')
+    .option('-p, --listen-port <port>', 'listen port, default 5000', parseInt, env.KYKM_LISTEN_PORT || 5000)
+    .action(async (mods, args) => {
+        try {
+            require('ts-node/register')
+            const server = new GrpcServer(),
+                cwd = process.cwd()
+            for (const mod of mods) {
+                const src = require.resolve(path.resolve(mod), { paths: [cwd] })
+                server.register(require(src).default, src)
+            }
+            server.start(`${args.listenAddr}:${args.listenPort}`)
+            console.log(`grpc server started at ${args.listenAddr}:${args.listenPort}`)
+        } catch (err) {
+            console.error(err)
+            process.exit(-1)
+        }
     })
+
+prog.on('command:*', () => {
+    prog.outputHelp()
+    process.exit(1)
+})
 
 prog.parse(process.argv)
 if (process.argv.length <= 2) {

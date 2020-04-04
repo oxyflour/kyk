@@ -1,6 +1,7 @@
 import path from 'path'
 import fs from 'fs'
 import ts from 'typescript'
+import crypto from 'crypto'
 import grpc, { KeyCertPair, ServerCredentials } from 'grpc'
 
 import { Readable, Writable } from 'stream'
@@ -8,10 +9,11 @@ import { EventIterator } from 'event-iterator'
 import * as protobuf from 'protobufjs'
 
 import { getProtoObject } from './parser'
-import { ApiDefinition, wrapFunc, md5, hookFunc, asyncCache, AsyncFunction, AsyncIteratorFunction } from './utils'
+import { ApiDefinition, wrapFunc, hookFunc, asyncCache, AsyncFunction, AsyncIteratorFunction, getSrvFuncName, metaQuery } from './utils'
 
-const QUERY_PROTO = require(path.join(__dirname, '..', 'proto.json')),
-    QUERY_SERVICE = '_query_proto'
+export function md5(str: string) {
+    return crypto.createHash('md5').update(str).digest('hex')
+}
 
 export function loadTsConfig(file: string) {
     const compilerOptionsJson = fs.readFileSync(file, 'utf8'),
@@ -60,8 +62,7 @@ async function startAsyncIterator(stream: Writable, iter: AsyncIterableIterator<
 
 const clientCache = { } as { [key: string]: any }
 export function callService(entry: string, host: string, args: any[], proto: any, cache = clientCache) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
-        funcName = path.basename(entry),
+    const [srvName, funcName] = getSrvFuncName(entry),
         cacheKey = `${srvName}/$/${host}`,
         client = cache[cacheKey] || (cache[cacheKey] = makeClient(proto, srvName, host)),
         { requestType, requestStream, responseStream } = proto.nested[srvName].methods[funcName],
@@ -90,11 +91,13 @@ export function callService(entry: string, host: string, args: any[], proto: any
 
 export function makeService(entry: string,
         func: AsyncFunction<any> | AsyncIteratorFunction<any>, proto: any) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
-        funcName = path.basename(entry),
+    const [srvName, funcName] = getSrvFuncName(entry),
         root = (protobuf as any).Root.fromJSON(proto),
-        desc = grpc.loadObject(root),
-        service = (desc[srvName] as any).service,
+        desc = grpc.loadObject(root)
+    if (!desc[srvName]) {
+        throw Error(`service ${srvName} not found`)
+    }
+    const service = (desc[srvName] as any).service,
         { requestType, requestStream, responseStream } = proto.nested[srvName].methods[funcName],
         fields = proto.nested[requestType].fields,
         argKeys = Object.keys(fields).sort((a, b) => fields[a].id - fields[b].id),
@@ -133,7 +136,7 @@ export function makeService(entry: string,
             }
         }
     }
-    return { proto, service, impl: { [funcName]: fn } }
+    return { service, impl: { [funcName]: fn } }
 }
 
 export interface GrpcOptions {
@@ -163,8 +166,8 @@ export class GrpcServer {
     private cachedServer = null as null | grpc.Server
     private get server() {
         if (!this.cachedServer) {
-            const proto = async (entry: string) => JSON.stringify(this.methods[entry].proto),
-                { service, impl } = makeService(QUERY_SERVICE, proto, QUERY_PROTO),
+            const func = async (entry: string) => JSON.stringify(this.methods[entry].proto),
+                { service, impl } = makeService(metaQuery.entry, func, metaQuery.proto),
                 server = this.cachedServer = new grpc.Server()
             server.addService(service, impl)
         }
@@ -213,12 +216,12 @@ export class GrpcServer {
     readonly methods = { } as { [entry: string]: { func: Function, proto: Object, hash: string } }
     register<T extends ApiDefinition>(mod: T, decl: string, config?: ts.CompilerOptions) {
         const opts = config || loadTsConfig(path.join(__dirname, '..', 'tsconfig.json')),
-            types = getProtoObject(decl, mod, opts)
+            proto = getProtoObject(decl, mod, opts)
         return wrapFunc(mod, (...stack) => {
             const entry = stack.map(({ propKey }) => propKey).reverse().join('/'),
                 [{ receiver, target }] = stack,
                 func = target.bind(receiver),
-                { proto, service, impl } = makeService(entry, func, types),
+                { service, impl } = makeService(entry, func, proto),
                 hash = md5(JSON.stringify(proto))
             for (const key of Object.keys(impl)) {
                 impl[key] = this.warp(entry, impl[key])
@@ -242,7 +245,8 @@ export class GrpcClient {
     }
 
     private proto = asyncCache(async (entry: string) => {
-        const json = await callService(QUERY_SERVICE, this.host, [entry], QUERY_PROTO, this.clients)
+        const json = await callService(metaQuery.entry,
+            this.host, [entry], metaQuery.proto, this.clients)
         return JSON.parse(`${json}`)
     })
     async select(entry: string) {

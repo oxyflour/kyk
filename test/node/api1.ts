@@ -1,4 +1,12 @@
-import Mesh from '../'
+import Mesh from '../../dist'
+
+function genericArray<T>(a: T) {
+    return [a]
+}
+
+function genericAB<A, B>(a: A, b: B) {
+    return { a, b }
+}
 
 export default (node: Mesh) => ({
     async testSimple(you: string) {
@@ -20,6 +28,12 @@ export default (node: Mesh) => ({
             await this.nested.nesteded.method(),
             await this.testSimple('nested'),
         ].join(' ')
+    },
+    async testGenericArray() {
+        return genericArray(0)
+    },
+    async testGenericMap() {
+        return genericAB(0, '')
     },
     nested: {
         async method() {
