@@ -12,6 +12,7 @@ env.KYKM_ETCD_OPTS && (opts.etcdOpts = JSON.parse(env.KYKM_ETCD_OPTS))
 env.KYKM_GRPC_OPTS && (opts.grpcOpts = JSON.parse(env.KYKM_GRPC_OPTS))
 
 prog.version(pkg.version)
+    .name('kykm')
     .command('serve [mods...]')
     .option('-n, --node-name <name>', 'mesh node name', undefined, env.KYKM_NODE_NAME)
     .option('-s, --announce-interval <seconds>', 'announce interval', parseInt, env.KYKM_ANNOUNCE_INTERVAL)
@@ -19,8 +20,12 @@ prog.version(pkg.version)
     .option('-s, --etcd-lease <seconds>', 'etcd lease', parseInt, env.KYKM_ETCD_LEASE)
     .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', undefined, env.KYKM_LISTEN_ADDR)
     .option('-p, --listen-port <port>', 'listen port, default random', parseInt, env.KYKM_LISTEN_PORT)
+    .option('-P, --project <file>', 'tsconfig.json path')
     .action(async (mods, args) => {
         try {
+            if (args.project) {
+                process.env.TS_NODE_PROJECT = args.project
+            }
             require('ts-node/register')
             const node = new Mesh({ ...opts, ...args }),
                 cwd = process.cwd()
@@ -36,26 +41,15 @@ prog.version(pkg.version)
         }
     })
 
-prog.command('call <method> [args...]')
-    .option('-e, --etcd-prefix <prefix>', 'etcd prefix', undefined, env.KYKM_ETCD_PREFIX)
-    .action(async (method: string, pars: string[], args) => {
-        try {
-            const api = new Mesh({ ...opts, ...args }).query() as any,
-                fn = method.split('.').reduce((fn, name) => fn[name], api),
-                ret = await fn(...pars.map(item => JSON.parse(item)))
-            console.log(JSON.stringify(ret, null, 4))
-            process.exit(0)
-        } catch (err) {
-            console.error(err)
-            process.exit(-1)
-        }
-    })
-
 prog.command('start [mods...]')
     .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', val => val, env.KYKM_LISTEN_ADDR || '0.0.0.0')
     .option('-p, --listen-port <port>', 'listen port, default 5000', parseInt, env.KYKM_LISTEN_PORT || 5000)
+    .option('-P, --project <file>', 'tsconfig.json path')
     .action(async (mods, args) => {
         try {
+            if (args.project) {
+                process.env.TS_NODE_PROJECT = args.project
+            }
             require('ts-node/register')
             const server = new GrpcServer(),
                 cwd = process.cwd()
@@ -65,6 +59,21 @@ prog.command('start [mods...]')
             }
             server.start(`${args.listenAddr}:${args.listenPort}`)
             console.log(`grpc server started at ${args.listenAddr}:${args.listenPort}`)
+        } catch (err) {
+            console.error(err)
+            process.exit(-1)
+        }
+    })
+
+prog.command('call <method> [args...]')
+    .option('-e, --etcd-prefix <prefix>', 'etcd prefix', undefined, env.KYKM_ETCD_PREFIX)
+    .action(async (method: string, pars: string[], args) => {
+        try {
+            const api = new Mesh({ ...opts, ...args }).query() as any,
+                fn = method.split('.').reduce((fn, name) => fn[name], api),
+                ret = await fn(...pars.map(item => JSON.parse(item)))
+            console.log(JSON.stringify(ret, null, 4))
+            process.exit(0)
         } catch (err) {
             console.error(err)
             process.exit(-1)
