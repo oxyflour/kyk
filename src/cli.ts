@@ -61,7 +61,7 @@ prog.command('start [mods...]')
                 cwd = process.cwd()
             for (const mod of mods) {
                 const src = require.resolve(path.resolve(mod), { paths: [cwd] })
-                server.register(require(src).default, src)
+                server.register(require(src).default, src.replace(/\.js$/i, '.d.ts'))
             }
             for (const mod of args.middleware) {
                 const src = require.resolve(path.resolve(mod), { paths: [cwd] })

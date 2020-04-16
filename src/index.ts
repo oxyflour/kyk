@@ -149,7 +149,7 @@ export default class KyokoMesh extends EventEmitter {
     register<T extends ApiDefinition>(api: string | T) {
         const exp  = typeof api === 'string' ? require(api).default : api,
             mod = typeof exp === 'function' ? exp(this) : exp,
-            decl = typeof api === 'string' ? api : `${mod.__filename}`
+            decl = typeof api === 'string' ? api.replace(/\.js$/i, '.d.ts') : `${mod.__filename}`
         if (!decl) {
             throw Error(`the argument should be the module path or an object containing __filename attribute`)
         }
