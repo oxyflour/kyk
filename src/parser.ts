@@ -42,6 +42,10 @@ const RENAME_TYPES = {
     null: 'NullValue',
 } as { [name: string]: string }
 
+function formatTypes(types: ts.Type[], checker: ts.TypeChecker) {
+    return types.map(type => checker.typeToString(type)).join('\nin ')
+}
+
 export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
     const program = ts.createProgram([file], opts),
         checker = program.getTypeChecker(),
@@ -67,7 +71,7 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
             if (intrinsic.intrinsicName !== 'unknown') {
                 return intrinsic.intrinsicName
             } else {
-                throw Error(`unknown type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+                throw Error(`unknown type ${formatTypes(next, checker)}`)
             }
         } else if (symbol && symbol.escapedName === 'Array' && reference.typeArguments) {
             if (reference.typeArguments.length === 1) {
@@ -79,7 +83,7 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
         } else if ((type.flags & ts.TypeFlags.Object) && stringIndexed) {
             const valType = parseExportType(stringIndexed, next)
             if (valType instanceof ExportMap) {
-                throw Error(`nested maps are not supported, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+                throw Error(`nested maps are not supported, type ${formatTypes(next, checker)}`)
             }
             return new ExportMap('string', valType)
         } else if ((type.flags & ts.TypeFlags.Object) && type.symbol && type.symbol.escapedName === 'Buffer') {
@@ -87,7 +91,7 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
         } else if ((type.flags & ts.TypeFlags.Object) && numberIndexed) {
             const valType = parseExportType(numberIndexed, next)
             if (valType instanceof ExportMap) {
-                throw Error(`nested maps are not supported, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+                throw Error(`nested maps are not supported, type ${formatTypes(next, checker)}`)
             }
             return new ExportMap('number', valType)
         } else if ((type.flags & ts.TypeFlags.Object) &&
@@ -149,13 +153,13 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                     let [ret] = returnType.typeArguments as TypeReferenceType[]
                     return new ExportFunc(argsType, parseExportType(ret, next), { requestStream, responseStream: true })
                 } else {
-                    throw Error(`return value is not an async function or iterator, type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+                    throw Error(`return value is not an async function or iterator, type ${formatTypes(next, checker)}`)
                 }
             } else {
-                throw Error(`can not parse function type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+                throw Error(`can not parse function type ${formatTypes(next, checker)}`)
             }
         } else {
-            throw Error(`can not parse type ${next.map(type => checker.typeToString(type)).join('\nin ')}`)
+            throw Error(`can not parse type ${formatTypes(next, checker)}`)
         }
     }
 
