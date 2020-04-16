@@ -19,7 +19,7 @@ prog.version(pkg.version)
     .option('-e, --etcd-prefix <prefix>', 'etcd prefix', undefined, env.KYKM_ETCD_PREFIX)
     .option('-s, --etcd-lease <seconds>', 'etcd lease', parseInt, env.KYKM_ETCD_LEASE)
     .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', undefined, env.KYKM_LISTEN_ADDR)
-    .option('-p, --listen-port <port>', 'listen port, default random', parseInt, env.KYKM_LISTEN_PORT)
+    .option('-p, --listen-port <port>', 'listen port, default random', val => parseInt(val), env.KYKM_LISTEN_PORT)
     .option('-m, --middleware <file>', 'middleware path', (val, all) => all.concat(val), [])
     .option('-P, --project <file>', 'tsconfig.json path')
     .action(async (mods, args) => {
@@ -48,7 +48,7 @@ prog.version(pkg.version)
 
 prog.command('start [mods...]')
     .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', val => val, env.KYKM_LISTEN_ADDR || '0.0.0.0')
-    .option('-p, --listen-port <port>', 'listen port, default 5000', parseInt, env.KYKM_LISTEN_PORT || 5000)
+    .option('-p, --listen-port <port>', 'listen port, default 5000', val => parseInt(val), env.KYKM_LISTEN_PORT || 5000)
     .option('-m, --middleware <file>', 'middleware path', (val, all) => all.concat(val), [])
     .option('-P, --project <file>', 'tsconfig.json path')
     .action(async (mods, args) => {
