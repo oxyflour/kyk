@@ -46,6 +46,16 @@ function formatTypes(types: ts.Type[], checker: ts.TypeChecker) {
     return types.map(type => checker.typeToString(type)).join('\nin ')
 }
 
+export function getModuleAndDeclaration(api: string | any, args = { } as any) {
+    const exp  = typeof api === 'string' ? require(api).default : api,
+        mod = typeof exp === 'function' ? exp(...args) : exp,
+        decl = typeof api === 'string' ? api.replace(/\.js$/i, '.d.ts') : `${mod.__filename}`
+    if (!decl) {
+        throw Error(`the argument should be the module path or an object containing __filename attribute`)
+    }
+    return { mod, decl }
+}
+
 export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
     const program = ts.createProgram([file], opts),
         checker = program.getTypeChecker(),

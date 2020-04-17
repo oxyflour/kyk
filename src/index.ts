@@ -6,6 +6,7 @@ import { Etcd3, Namespace, Lease, IOptions, Watcher } from 'etcd3'
 
 import { ApiDefinition, asyncCache, weightedRandom } from './utils'
 import { GrpcServer, GrpcClient, GrpcMiddleware, GrpcContext } from './grpc'
+import { getModuleAndDeclaration } from './parser'
 
 export { GrpcServer, GrpcClient, GrpcMiddleware, GrpcContext }
 
@@ -147,12 +148,7 @@ export default class KyokoMesh extends EventEmitter {
     }
 
     register<T extends ApiDefinition>(api: string | T) {
-        const exp  = typeof api === 'string' ? require(api).default : api,
-            mod = typeof exp === 'function' ? exp(this) : exp,
-            decl = typeof api === 'string' ? api.replace(/\.js$/i, '.d.ts') : `${mod.__filename}`
-        if (!decl) {
-            throw Error(`the argument should be the module path or an object containing __filename attribute`)
-        }
+        const { mod, decl } = getModuleAndDeclaration(api, this)
         return this.server.register(mod, decl), this
     }
 
