@@ -71,7 +71,7 @@ prog.command('start [mods...]')
             const server = new GrpcServer()
             for (const mod of mods) {
                 const src = resolveModule(mod),
-                    api = getModuleAndDeclaration(src, server)
+                    api = getModuleAndDeclaration(src, [server])
                 server.register(api.mod, api.decl)
             }
             for (const mod of args.middleware) {

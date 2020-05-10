@@ -10,11 +10,11 @@
   "scripts": {
     "prepublish": "npm run build",
     "test:web:grpc": "node dist/cli.js start test/node/api2.ts",
-    "test:web:proxy": "grpcwebproxy --backend_addr localhost:5000 --server_tls_cert_file=../keys/yff.me/cert.pem --server_tls_key_file=../keys/yff.me/privkey.pem  --allow_all_origins",
-    "test:web:www": "parcel test/web/index.html",
-    "test:web": "concurrently \"npm run test:web:grpc\" \"npm run test:web:proxy\" \"npm run test:web:www\"",
+    "test:web:proxy": "grpcwebproxy --backend_addr=localhost:5000 --run_tls_server=false --allow_all_origins",
+    "test:web:www": "timeout 10 && parcel build test/web/index.ts -o test && mocha-headless-chrome -f test/web/index.html",
+    "test:web": "concurrently \"npm run test:web:grpc\" \"npm run test:web:proxy\"",
     "test:node": "mocha -r ts-node/register test/node/index.ts",
-    "test": "npm run test:node",
+    "test": "npm build && npm run test:node",
     "build": "tsc"
   },
   "browserslist": [
@@ -31,6 +31,7 @@
     "chai": "^4.1.2",
     "concurrently": "^5.1.0",
     "mocha": "^5.0.0",
+    "mocha-headless-chrome": "^3.0.0",
     "parcel": "^1.12.4",
     "tslint": "^5.9.1"
   },

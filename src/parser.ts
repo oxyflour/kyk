@@ -46,7 +46,7 @@ function formatTypes(types: ts.Type[], checker: ts.TypeChecker) {
     return types.map(type => checker.typeToString(type)).join('\nin ')
 }
 
-export function getModuleAndDeclaration(api: string | any, args = { } as any) {
+export function getModuleAndDeclaration(api: string | any, args = [] as any[]) {
     const exp  = typeof api === 'string' ? require(api).default : api,
         mod = typeof exp === 'function' ? exp(...args) : exp,
         decl = typeof api === 'string' ? api.replace(/\.js$/i, '.d.ts') : `${mod.__filename}`

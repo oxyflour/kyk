@@ -148,7 +148,7 @@ export default class KyokoMesh extends EventEmitter {
     }
 
     register<T extends ApiDefinition>(api: string | T) {
-        const { mod, decl } = getModuleAndDeclaration(api, this)
+        const { mod, decl } = getModuleAndDeclaration(api, [this])
         return this.server.register(mod, decl), this
     }
 

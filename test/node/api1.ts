@@ -45,12 +45,6 @@ export default (node: Mesh) => ({
             },
         },
     },
-    async *returnStream() {
-        for (let i = 1; i < 10; i ++) {
-            await new Promise(resolve => setTimeout(resolve, 100))
-            yield i
-        }
-    },
     async inputStream(iter: AsyncIterableIterator<number>) {
         const arr = []
         for await (const val of iter) {

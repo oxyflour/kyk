@@ -38,4 +38,10 @@ export default {
     async testDefaultParameters(a: number, b = 'x') {
         return a + b
     },
+    async *returnStream() {
+        for (let i = 1; i < 10; i ++) {
+            await new Promise(resolve => setTimeout(resolve, 100))
+            yield i
+        }
+    },
 }

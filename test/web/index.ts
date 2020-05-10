@@ -4,7 +4,9 @@ import * as assert from 'assert'
 import Api2 from '../node/api2'
 
 describe('test', function() {
-    const api2 = makeAPI<typeof Api2>('https://dev.yff.me:8443')
+    this.timeout(60000)
+
+    const api2 = makeAPI<typeof Api2>('http://127.0.0.1:8080')
 
     it(`should work with array`, async () => {
         assert.deepEqual(await api2.testArray([5]), [6])
@@ -46,5 +48,13 @@ describe('test', function() {
     it(`should work with default parameters`, async () => {
         assert.equal(await api2.testDefaultParameters(1), '1x')
         assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
+    })
+
+    it(`should work with returned stream`, async () => {
+        const arr = []
+        for await (const i of api2.returnStream()) {
+            arr.push(i)
+        }
+        assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
     })
 })
