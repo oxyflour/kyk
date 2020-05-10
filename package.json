@@ -11,8 +11,8 @@
     "prepublish": "npm run build",
     "test:web:grpc": "node dist/cli.js start test/node/api2.ts",
     "test:web:proxy": "grpcwebproxy --backend_addr=localhost:5000 --run_tls_server=false --allow_all_origins",
-    "test:web:www": "timeout 10 && parcel build test/web/index.ts -o test && mocha-headless-chrome -f test/web/index.html",
-    "test:web": "concurrently \"npm run test:web:grpc\" \"npm run test:web:proxy\"",
+    "test:web:www": "parcel build test/web/index.ts -o test && mocha-headless-chrome -f test/web/index.html",
+    "test:web:win": "cmd /c \"start npm run test:web:grpc\" && cmd /c \"start npm run test:web:proxy\" && npm run test:web:www",
     "test:node": "mocha -r ts-node/register test/node/index.ts",
     "test": "npm build && npm run test:node",
     "build": "tsc"

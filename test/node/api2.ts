@@ -39,8 +39,10 @@ export default {
         return a + b
     },
     async *returnStream() {
+        // stream will break after about 8 seconds
+        // see https://github.com/grpc/grpc-web/issues/361
         for (let i = 1; i < 10; i ++) {
-            await new Promise(resolve => setTimeout(resolve, 100))
+            await new Promise(resolve => setTimeout(resolve, 2000))
             yield i
         }
     },
