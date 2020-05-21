@@ -65,9 +65,10 @@ function deserializeBinary({ fields, nested }: Proto, reader: BinaryReader, out 
     for (const [name, field] of Object.entries(fields)) {
         if (field.options && field.options.default !== undefined) {
             out[name] = JSON.parse(JSON.stringify(field.options.default))
+        } else if (field.rule === 'repeated') {
+            out[name] = []
         }
     }
-    const getArr = (name: string) => out[name] as any[] || (out[name] = [])
     while (reader.nextField()) {
         if (reader.isEndGroup()) {
             break
@@ -91,10 +92,10 @@ function deserializeBinary({ fields, nested }: Proto, reader: BinaryReader, out 
         switch (type) {
             case 'bytes':
                 const buf = Buffer.from(reader.readBytes())
-                repeated ? getArr(name).push(buf) : (out[name] = buf)
+                repeated ? out[name].push(buf) : (out[name] = buf)
                 break
             case 'string':
-                repeated ? getArr(name).push(reader.readString()) : (out[name] = reader.readString())
+                repeated ? out[name].push(reader.readString()) : (out[name] = reader.readString())
                 break
             case 'float':
                 out[name] = repeated ? reader.readPackedFloat() : reader.readFloat()
@@ -106,8 +107,9 @@ function deserializeBinary({ fields, nested }: Proto, reader: BinaryReader, out 
                 const sub = nested[type]
                 if (sub) {
                     const val = { }
+                    Object.assign(sub.nested, nested)
                     reader.readMessage(val, (val, reader) => deserializeBinary(sub, reader, val))
-                    repeated ? getArr(name).push(val) : (out[name] = val)
+                    repeated ? out[name].push(val) : (out[name] = val)
                 } else {
                     throw Error(`unknown type ${type}`)
                 }

@@ -211,16 +211,16 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
             ;(type as any).cachedProtoObject = output
             for (const [name, { id, member, required, initializer }] of Object.entries(type.members)) {
                 let type = proto(member)
-                if (type.name) {
-                    delete type.nested[type.name]
-                    nested[type.name] = type
-                    type = type.name
+                if (type.cachedName) {
+                    delete type.nested[type.cachedName]
+                    nested[type.cachedName] = type
+                    type = type.cachedName
                 }
                 if (typeof type !== 'string') {
                     const typeName = `${name.replace(/^\w/, c => c.toUpperCase())}Type`,
                         typeBody = type
                     nested[type = typeName] = typeBody
-                    typeBody.name = typeName
+                    typeBody.cachedName = typeName
                 }
                 const rule = member instanceof ExportArray ? 'repeated' : required ? 'required' : 'optional',
                     keyType = member instanceof ExportMap ? proto(member.key) : undefined,

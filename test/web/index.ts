@@ -50,6 +50,10 @@ describe('test', function() {
         assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
     })
 
+    it(`should work with recursive type`, async () => {
+        assert.deepEqual(await api2.testRecursive(), [{ children: [{ title: 'y', children: [] }], title: 'x' }])
+    })
+
     it(`should work with returned stream`, async () => {
         const arr = []
         for await (const i of api2.returnStream()) {

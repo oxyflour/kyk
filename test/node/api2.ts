@@ -13,6 +13,11 @@ export class A {
     }
 }
 
+export interface D {
+    title: string
+    children: D[]
+}
+
 export default {
     async testArray(arg: number[]) {
         return arg.map(num => num + 1)
@@ -37,6 +42,9 @@ export default {
     },
     async testDefaultParameters(a: number, b = 'x') {
         return a + b
+    },
+    async testRecursive() {
+        return [{ children: [{ title: 'y', children: [] }], title: 'x' }] as D[]
     },
     async *returnStream() {
         // stream will break after about 8 seconds
