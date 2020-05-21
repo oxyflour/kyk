@@ -8,6 +8,10 @@ function genericAB<A, B>(a: A, b: B) {
     return { a, b }
 }
 
+export interface D {
+    children: D[]
+}
+
 export default (node: Mesh) => ({
     async testSimple(you: string) {
         return 'test pass ' + you
@@ -34,6 +38,9 @@ export default (node: Mesh) => ({
     },
     async testGenericMap() {
         return genericAB(0, '')
+    },
+    async testRecursive() {
+        return [{ children: [] }] as D[]
     },
     nested: {
         async method() {

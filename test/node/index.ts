@@ -45,6 +45,10 @@ describe('test', function() {
         assert.deepEqual(await api1.testGenericMap(), { a: 0, b: '' })
     })
 
+    it(`should work with recursive`, async () => {
+        assert.deepEqual(await api1.testRecursive(), [{ children: [] }])
+    })
+
     it(`should work with middleware`, async () => {
         const ret = [] as any[]
         node1.use(async (ctx, next) => {

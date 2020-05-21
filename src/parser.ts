@@ -110,10 +110,16 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
             const [typeArgument] = type.aliasTypeArguments
             return parseExportType(typeArgument, next)
         } else if ((type.flags & ts.TypeFlags.Object) && symbol && symbol.members) {
+            // use cache to avoid recursive types
+            if ((type as any).cachedTypeObject) {
+                return (type as any).cachedTypeObject
+            }
             const isClass = symbol.valueDeclaration && ts.isClassLike(symbol.valueDeclaration),
                 result = { } as { [name: string]: ExportMember },
                 [parent] = stack,
-                isParentPartial = parent && parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial'
+                isParentPartial = parent && parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial',
+                output = new ExportObject(result)
+            ;(type as any).cachedTypeObject = output
             let id = 1
             for (const symbol of type.getProperties()) {
                 const isFuncion = symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)
@@ -126,7 +132,7 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                     result[symbol.escapedName.toString()] = { id: id ++, member, initializer, required }
                 }
             }
-            return new ExportObject(result)
+            return output
         } else if (symbol && symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)) {
             const signatures = type.getCallSignatures()
             if (signatures.length === 1) {
@@ -194,26 +200,43 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
                 throw Error(`unknown type ${type}`)
             }
         } else if (type instanceof ExportObject) {
+            // use weak map to avoid stack overflow
+            if ((type as any).cachedProtoObject) {
+                return (type as any).cachedProtoObject
+            }
+
             const fields = { } as any,
-                nested = { } as any
+                nested = { } as any,
+                output = { fields, nested } as any
+            ;(type as any).cachedProtoObject = output
             for (const [name, { id, member, required, initializer }] of Object.entries(type.members)) {
                 let type = proto(member)
+                if (type.name) {
+                    delete type.nested[type.name]
+                    nested[type.name] = type
+                    type = type.name
+                }
                 if (typeof type !== 'string') {
                     const typeName = `${name.replace(/^\w/, c => c.toUpperCase())}Type`,
                         typeBody = type
                     nested[type = typeName] = typeBody
+                    typeBody.name = typeName
                 }
                 const rule = member instanceof ExportArray ? 'repeated' : required ? 'required' : 'optional',
                     keyType = member instanceof ExportMap ? proto(member.key) : undefined,
                     options = { } as any
                 if (initializer) {
-                    options.default = Function(`return ${initializer}`)()
+                    try {
+                        options.default = Function(`return ${initializer}`)()
+                    } catch (err) {
+                        console.warn(`WARN: evaluate initializer (${initializer}) failed`)
+                    }
                 }
                 if (type !== 'void') {
                     fields[name] = { id, keyType, options, rule, type }
                 }
             }
-            return { fields, nested }
+            return output
         } else if (type instanceof ExportArray) {
             return proto(type.item)
         } else if (type instanceof ExportMap) {
