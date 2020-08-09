@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import path from 'path'
+import fs from 'fs'
 import prog from 'commander'
 import Mesh, { MeshOptions, GrpcServer } from './'
 import { getModuleAndDeclaration } from './parser'
@@ -62,23 +63,37 @@ prog.command('start [mods...]')
     .option('-p, --listen-port <port>', 'listen port, default 5000', parseIntWithRadix10, env.KYKM_LISTEN_PORT || 5000)
     .option('-m, --middleware <file>', 'middleware path', (val, all) => all.concat(val), [])
     .option('-P, --project <file>', 'tsconfig.json path')
+    .option('-w, --watch', 'refresh service when module change')
     .action(async (mods, args) => {
         try {
             if (args.project) {
                 process.env.TS_NODE_PROJECT = args.project
             }
             require('ts-node/register')
-            const server = new GrpcServer()
-            for (const mod of mods) {
-                const src = resolveModule(mod),
-                    api = getModuleAndDeclaration(src, [server])
-                server.register(api.mod, api.decl)
+            const watcher = { resolve: () => { } }
+            if (args.watch) {
+                for (const mod of mods) {
+                    const src = resolveModule(mod)
+                    console.log(`watching ${src}`)
+                    fs.watch(src, () => watcher.resolve())
+                }
             }
-            for (const mod of args.middleware) {
-                server.use(require(resolveModule(mod)).default)
+            while (true) {
+                const server = new GrpcServer()
+                for (const mod of mods) {
+                    const src = resolveModule(mod),
+                        api = getModuleAndDeclaration(src, [server])
+                    server.register(api.mod, api.decl)
+                }
+                for (const mod of args.middleware) {
+                    server.use(require(resolveModule(mod)).default)
+                }
+                server.start(`${args.listenAddr}:${args.listenPort}`, opts.grpcOpts)
+                console.log(`grpc server started at ${args.listenAddr}:${args.listenPort}`)
+                await new Promise(resolve => watcher.resolve = resolve)
+                await server.destroy()
+                console.log(`restarting service...`)
             }
-            server.start(`${args.listenAddr}:${args.listenPort}`, opts.grpcOpts)
-            console.log(`grpc server started at ${args.listenAddr}:${args.listenPort}`)
         } catch (err) {
             console.error(err)
             process.exit(-1)
