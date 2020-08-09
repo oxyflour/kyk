@@ -81,8 +81,9 @@ prog.command('start [mods...]')
             while (true) {
                 const server = new GrpcServer()
                 for (const mod of mods) {
-                    const src = resolveModule(mod),
-                        api = getModuleAndDeclaration(src, [server])
+                    const src = resolveModule(mod)
+                    delete require.cache[src]
+                    const api = getModuleAndDeclaration(src, [server])
                     server.register(api.mod, api.decl)
                 }
                 for (const mod of args.middleware) {
