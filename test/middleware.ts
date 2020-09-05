@@ -1,4 +1,4 @@
-import { GrpcContext } from '../'
+import { GrpcContext } from '../dist/grpc'
 import { AsyncFunction } from '../dist/utils'
 
 export default async (ctx: GrpcContext, next: AsyncFunction<any>) => {

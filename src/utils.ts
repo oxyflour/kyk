@@ -1,11 +1,3 @@
-export function weightedRandom(weights: number[]) {
-    let i = 0, v = Math.random() * weights.reduce((a, b) => a + b, 0)
-    while (i < weights.length && v > weights[i]) {
-        v -= weights[i ++]
-    }
-    return i
-}
-
 export function asyncCache<R, F extends (...args: any[]) => Promise<R>>(fn: F) {
     const cache = { } as { [key: string]: Promise<R> }
     return (function (...args: any[]) {
@@ -56,9 +48,9 @@ export function wrapFunc<M extends ApiDefinition>(
 }
 
 export function getSrvFuncName(entry: string) {
-    const srvName = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
-        funcName = entry.split('/').pop() || ''
-    return [srvName, funcName]
+    const srv = ('Srv/' + entry).replace(/\/(\w)/g, (_, c) => c.toUpperCase()).replace(/\W/g, '_'),
+        func = entry.split('/').pop() || ''
+    return [srv, func]
 }
 
 export const metaQuery = {

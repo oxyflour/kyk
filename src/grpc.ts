@@ -32,25 +32,38 @@ export function loadTsConfig(file: string) {
     return settings.options
 }
 
-function makeClient(proto: any, srvName: string, host: string) {
+export function getModuleAndDeclaration(api: string | any, ...args: any[]) {
+    const exp  = typeof api === 'string' ? require(api).default : api,
+        mod = typeof exp === 'function' ? exp(...args) : exp,
+        decl = typeof api === 'string' ? api.replace(/\.js$/i, '.d.ts') : `${mod.__filename}`
+    if (!decl) {
+        throw Error(`the argument should be the module path or an object containing __filename attribute`)
+    }
+    return { mod, decl }
+}
+
+function makeClient(proto: any, srvName: string, url: string) {
     const root = (protobuf as any).Root.fromJSON(proto),
         desc = grpc.loadObject(root),
         Client = desc[srvName] as typeof grpc.Client
-    return new Client(host, grpc.credentials.createInsecure())
+    return new Client(url, grpc.credentials.createInsecure())
 }
 
-function makeAsyncIterator(stream: Readable) {
-    let callback: (data: any) => any
-    return new EventIterator(
-        (push, pop, fail) => stream
-            .on('data', callback = data => push(data.result))
-            .on('end', pop)
-            .on('error', fail),
-        (_, pop, fail) => stream
-            .removeListener('data', callback)
-            .removeListener('end', pop)
-            .removeListener('error', fail),
-    )
+function makeAsyncIterator(readable: Readable) {
+    return new EventIterator(queue => {
+        const ondata = ({ result }: any) => queue.push(result)
+        readable.on('data', ondata)
+        readable.on('end', queue.stop)
+        readable.on('error', queue.fail)
+        queue.on('highWater', () => readable.pause())
+        queue.on('lowWater', () => readable.resume())
+        return () => {
+            readable.removeListener('data', ondata)
+            readable.removeListener('end', queue.stop)
+            readable.removeListener('error', queue.fail)
+            readable.destroy()
+        }
+    })
 }
 
 async function startAsyncIterator(stream: Writable, iter: AsyncIterableIterator<any>) {
@@ -60,31 +73,29 @@ async function startAsyncIterator(stream: Writable, iter: AsyncIterableIterator<
     stream.end()
 }
 
-const clientCache = { } as { [key: string]: any }
-export function callService(entry: string, host: string, args: any[], proto: any, cache = clientCache) {
+export function callService(client: grpc.Client, entry: string, args: any[], proto: any) {
     const [srvName, funcName] = getSrvFuncName(entry),
-        cacheKey = `${srvName}/$/${host}`,
-        client = cache[cacheKey] || (cache[cacheKey] = makeClient(proto, srvName, host)),
         { requestType, requestStream, responseStream } = proto.nested[srvName].methods[funcName],
         fields = proto.nested[requestType].fields,
-        request = Object.keys(fields).reduce((all, key, idx) => ({ ...all, [key]: args[idx] }), { })
+        request = Object.keys(fields).reduce((all, key, idx) => ({ ...all, [key]: args[idx] }), { }),
+        func = (client as any)[funcName].bind(client)
     if (requestStream && responseStream) {
-        const stream = client[funcName]() as grpc.ClientDuplexStream<any, any>
+        const stream = func() as grpc.ClientDuplexStream<any, any>
         startAsyncIterator(stream, args[0])
         return makeAsyncIterator(stream)
     } else if (requestStream) {
         return new Promise((resolve, reject) => {
             const callback = (err: Error, ret: any) => err ? reject(err) : resolve(ret.result),
-                stream = client[funcName](callback) as grpc.ClientWritableStream<any>
+                stream = func(callback) as grpc.ClientWritableStream<any>
             startAsyncIterator(stream, args[0])
         })
     } else if (responseStream) {
-        const stream = client[funcName](request) as grpc.ClientReadableStream<any>
+        const stream = func(request) as grpc.ClientReadableStream<any>
         return makeAsyncIterator(stream)
     } else {
         return new Promise((resolve, reject) => {
             const callback = (err: Error, ret: any) => err ? reject(err) : resolve(ret.result)
-            client[funcName](request, callback)
+            func(request, callback)
         })
     }
 }
@@ -115,9 +126,8 @@ export function makeService(entry: string,
                 const arg = makeAsyncIterator(stream),
                     result = await func(arg) as Promise<any>
                 callback(null, { result });
-            }
-            catch (error) {
-                callback(error, null);
+            } catch (err) {
+                callback(err, null);
             }
         }
     } else if (responseStream) {
@@ -130,9 +140,8 @@ export function makeService(entry: string,
             try {
                 const result = await func(...makeArgs(call.request)) as Promise<any>
                 return callback(null, { result });
-            }
-            catch (error) {
-                return callback(error, null);
+            } catch (err) {
+                return callback(err, null);
             }
         }
     }
@@ -232,6 +241,11 @@ export class GrpcServer {
         })
     }
 
+    serve(src: string, args = [ ] as any[], config?: ts.CompilerOptions) {
+        const { mod, decl } = getModuleAndDeclaration(src, ...args)
+        return this.register(mod, decl, config)
+    }
+
     async destroy(waiting = 30) {
         if (this.cachedServer) {
             setTimeout(() => this.server.forceShutdown(), waiting * 1000)
@@ -241,28 +255,28 @@ export class GrpcServer {
 }
 
 export class GrpcClient {
-    constructor(private host = 'localhost:3456') {
-    }
-
-    private proto = asyncCache(async (entry: string) => {
-        const json = await callService(metaQuery.entry,
-            this.host, [entry], metaQuery.proto, this.clients)
-        return JSON.parse(`${json}`)
-    })
-    async select(entry: string) {
-        const { host } = this,
-            proto = await this.proto(entry)
-        return { host, proto }
+    constructor(private url = 'localhost:3456') {
     }
 
     private clients = { } as { [key: string]: grpc.Client }
+    private getClient(proto: any, entry: string) {
+        const [srvName] = getSrvFuncName(entry)
+        return this.clients[srvName] || (this.clients[srvName] = makeClient(proto, srvName, this.url))
+    }
+
+    private proto = asyncCache(async (entry: string) => {
+        const client = this.getClient(metaQuery.proto, metaQuery.entry),
+            json = await callService(client, metaQuery.entry, [entry], metaQuery.proto)
+        return JSON.parse(`${json}`)
+    })
+
     private call(entry: string, args: any[]) {
         // for async functions
-        const cache = this.clients
         const then = async (resolve: Function, reject: Function) => {
             try {
-                const { host, proto } = await this.select(entry),
-                    ret = callService(entry, host, args, proto, cache)
+                const proto = await this.proto(entry),
+                    client = this.getClient(proto, entry),
+                    ret = callService(client, entry, args, proto)
                 resolve(ret)
             } catch (err) {
                 reject(err)
@@ -272,8 +286,9 @@ export class GrpcClient {
         let proxy: AsyncIterableIterator<any>
         const next = async () => {
             if (!proxy) {
-                const { host, proto } = await this.select(entry),
-                    ret = callService(entry, host, args, proto, cache) as any
+                const proto = await this.proto(entry),
+                    client = this.getClient(proto, entry),
+                    ret = callService(client, entry, args, proto) as any
                 proxy = ret[Symbol.asyncIterator]()
             }
             return await proxy.next()

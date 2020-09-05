@@ -1,17 +1,18 @@
 #!/usr/bin/env node
 
 import path from 'path'
-import fs from 'fs'
-import prog from 'commander'
-import Mesh, { MeshOptions, GrpcServer } from './'
-import { getModuleAndDeclaration } from './parser'
+import program from 'commander'
+import ts from 'typescript'
+import fs from 'mz/fs'
+import URL from 'url'
+import { isMaster, fork } from 'cluster'
+import { GrpcWebProxy } from '@dataform/grpc-web-proxy'
+import * as tsNode from 'ts-node'
 
-const pkg = require(path.join(__dirname, '..', 'package.json')),
-    { env } = process,
-    opts = { } as MeshOptions
+import { GrpcServer, getModuleAndDeclaration, loadTsConfig, GrpcClient } from './grpc'
 
-env.KYKM_ETCD_OPTS && (opts.etcdOpts = JSON.parse(env.KYKM_ETCD_OPTS))
-env.KYKM_GRPC_OPTS && (opts.grpcOpts = JSON.parse(env.KYKM_GRPC_OPTS))
+const { version, name } = require(path.join(__dirname, '..', 'package.json'))
+program.version(version).name(name)
 
 function resolveModule(src: string) {
     try {
@@ -21,108 +22,113 @@ function resolveModule(src: string) {
     }
 }
 
-function parseIntWithRadix10(val: string) {
-    return parseInt(val)
-}
-
-prog.version(pkg.version)
-    .name('kykm')
-    .command('serve [mods...]')
-    .option('-n, --node-name <name>', 'mesh node name', undefined, env.KYKM_NODE_NAME)
-    .option('-s, --announce-interval <seconds>', 'announce interval', parseIntWithRadix10, env.KYKM_ANNOUNCE_INTERVAL)
-    .option('-e, --etcd-prefix <prefix>', 'etcd prefix', undefined, env.KYKM_ETCD_PREFIX)
-    .option('-s, --etcd-lease <seconds>', 'etcd lease', parseIntWithRadix10, env.KYKM_ETCD_LEASE)
-    .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', undefined, env.KYKM_LISTEN_ADDR)
-    .option('-p, --listen-port <port>', 'listen port, default random', parseIntWithRadix10, env.KYKM_LISTEN_PORT)
-    .option('-m, --middleware <file>', 'middleware path', (val, all) => all.concat(val), [])
-    .option('-P, --project <file>', 'tsconfig.json path')
-    .action(async (mods, args) => {
+function exitOnError<F extends (...args: any[]) => Promise<any>>(fn: F) {
+    return (async (...args: any[]) => {
         try {
-            if (args.project) {
-                process.env.TS_NODE_PROJECT = args.project
-            }
-            require('ts-node/register')
-            const node = new Mesh({ ...opts, ...args })
-            for (const mod of mods) {
-                node.register(resolveModule(mod))
-            }
-            for (const mod of args.middleware) {
-                node.use(require(resolveModule(mod)).default)
-            }
-            await node.init()
-            const { listenAddr, listenPort, nodeName } = node.opts
-            console.log(`serving "${nodeName}" with ${node.entries.length} entries at ${listenAddr}:${listenPort}`)
+            await fn(...args)
         } catch (err) {
             console.error(err)
             process.exit(-1)
         }
-    })
+    }) as F
+}
 
-prog.command('start [mods...]')
-    .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', val => val, env.KYKM_LISTEN_ADDR || '0.0.0.0')
-    .option('-p, --listen-port <port>', 'listen port, default 5000', parseIntWithRadix10, env.KYKM_LISTEN_PORT || 5000)
-    .option('-m, --middleware <file>', 'middleware path', (val, all) => all.concat(val), [])
-    .option('-P, --project <file>', 'tsconfig.json path')
-    .option('-w, --watch', 'refresh service when module change')
-    .action(async (mods, args) => {
-        try {
-            if (args.project) {
-                process.env.TS_NODE_PROJECT = args.project
+program.command('call <url> [args...]')
+    .option('-g, --return-generator', 'return generator')
+    .option('-j, --input-json', 'parse args as json')
+    .option('-s, --output-json', 'print output as json')
+    .option('--project <file>', 'tsconfig.json path', path.join(__dirname, '..', 'tsconfig.json'))
+    .action(exitOnError(async (url, args, opts) => {
+        const { host, path } = URL.parse(url),
+            client = new GrpcClient(host || 'localhost:5000'),
+            func = (path || '/').substr(1).split('/').reduce((func: any, part: string) => func[part], client.query())
+        if (opts.returnGenerator) {
+            for await (const ret of func(...args)) {
+                console.log(opts.outputJson ? JSON.stringify(ret) : ret)
             }
-            require('ts-node/register')
-            const watcher = { resolve: () => { } }
-            if (args.watch) {
-                for (const mod of mods) {
-                    const src = resolveModule(mod)
-                    console.log(`watching ${src}`)
-                    fs.watch(src, () => watcher.resolve())
+        } else {
+            const ret = await func(...args.map((arg: string) => opts.inputJson ? JSON.parse(arg) : arg))
+            console.log(opts.outputJson ? JSON.stringify(ret) : ret)
+        }
+    }))
+
+program.command('serve [args...]')
+    .option('-l, --listen-addr <addr>', 'listen addr, default 0.0.0.0', process.env.KYKM_LISTEN_ADDR || '0.0.0.0')
+    .option('-p, --listen-port <port>', 'listen port, default 5000', process.env.KYKM_LISTEN_PORT || '5000')
+    .option('-m, --middleware <file>', 'middleware path', (val, all) => all.concat(val), `${process.env.KYKM_MIDDLEWARES || ''}`.split(''))
+    .option('-w, --watch', 'keep watching')
+    .option('--project <file>', 'tsconfig.json path', path.join(__dirname, '..', 'tsconfig.json'))
+    .option('--proxy-port <port>', 'proxy port, default 8080', process.env.KYKM_PROXY_PORT || '8080')
+    .option('--proxy-mode <mode>', 'proxy mode, default http1-insecure', process.env.KYKM_PROXY_MODE || 'http1-insecure')
+    .action(exitOnError(async (args, opts) => {
+        const tsOpts = loadTsConfig(opts.project)
+        tsNode.register(tsOpts)
+        async function start() {
+            const server = new GrpcServer()
+            for (const arg of args) {
+                const src = resolveModule(arg),
+                    { mod, decl } = getModuleAndDeclaration(src, server)
+                server.register(mod, decl)
+            }
+            for (const mod of opts.middleware) {
+                server.use(require(resolveModule(mod)).default)
+            }
+            server.start(`${opts.listenAddr}:${opts.listenPort}`, opts.grpcOpts)
+            console.log(`INFO: grpc server started at ${opts.listenAddr}:${opts.listenPort}`)
+            return server
+        }
+
+        const watcher = { resolve: () => { } }
+        async function startAndWatch() {
+            const files = args.map((arg: string) => resolveModule(arg)),
+                prog = ts.createProgram(files, tsOpts)
+            for (const { fileName } of prog.getSourceFiles()) {
+                // we will ignore files in node_modules
+                if (!fileName.includes('node_modules') && await fs.exists(fileName)) {
+                    console.log(`INFO: watching ${fileName}`)
+                    fs.watchFile(fileName, () => watcher.resolve())
                 }
             }
             while (true) {
-                const server = new GrpcServer()
-                for (const mod of mods) {
-                    const src = resolveModule(mod)
-                    delete require.cache[src]
-                    const api = getModuleAndDeclaration(src, [server])
-                    server.register(api.mod, api.decl)
+                try {
+                    const server = await start()
+                    console.log(`INFO: waiting for file changes...`)
+                    await new Promise(resolve => watcher.resolve = resolve)
+                    console.log(`INFO: reloading service...`)
+                    await new Promise(resolve => setTimeout(resolve, 500))
+                    await server.destroy(0)
+                } catch (err) {
+                    console.error(err)
+                    console.log(`INFO: waiting for file changes...`)
+                    await new Promise(resolve => watcher.resolve = resolve)
                 }
-                for (const mod of args.middleware) {
-                    server.use(require(resolveModule(mod)).default)
-                }
-                server.start(`${args.listenAddr}:${args.listenPort}`, opts.grpcOpts)
-                console.log(`grpc server started at ${args.listenAddr}:${args.listenPort}`)
-                await new Promise(resolve => watcher.resolve = resolve)
-                await server.destroy()
-                console.log(`restarting service...`)
             }
-        } catch (err) {
-            console.error(err)
-            process.exit(-1)
         }
-    })
 
-prog.command('call <method> [args...]')
-    .option('-e, --etcd-prefix <prefix>', 'etcd prefix', undefined, env.KYKM_ETCD_PREFIX)
-    .action(async (method: string, pars: string[], args) => {
-        try {
-            const api = new Mesh({ ...opts, ...args }).query() as any,
-                fn = method.split('.').reduce((fn, name) => fn[name], api),
-                ret = await fn(...pars.map(item => JSON.parse(item)))
-            console.log(JSON.stringify(ret, null, 4))
-            process.exit(0)
-        } catch (err) {
-            console.error(err)
-            process.exit(-1)
+        if (isMaster) {
+            if (opts.watch) {
+                await startAndWatch()
+            } else {
+                await start()
+            }
+            fork()
+        } else {
+            new GrpcWebProxy({
+                backend: `http://127.0.0.1:${opts.listenPort}`,
+                mode: opts.proxyMode,
+                port: opts.proxyPort,
+            })
+            console.log(`INFO: grpc proxy started at ${opts.listenAddr}:${opts.proxyPort}`)
         }
-    })
+    }))
 
-prog.on('command:*', () => {
-    prog.outputHelp()
+program.on('command:*', () => {
+    program.outputHelp()
     process.exit(1)
 })
 
-prog.parse(process.argv)
+program.parse(process.argv)
 if (process.argv.length <= 2) {
-    prog.outputHelp()
+    program.outputHelp()
     process.exit(1)
 }

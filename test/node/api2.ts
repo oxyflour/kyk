@@ -47,11 +47,13 @@ export default {
         return [{ children: [{ title: 'y', children: [] }], title: 'x' }] as D[]
     },
     async *returnStream() {
-        // stream will break after about 8 seconds
-        // see https://github.com/grpc/grpc-web/issues/361
         for (let i = 1; i < 10; i ++) {
             await new Promise(resolve => setTimeout(resolve, 2000))
             yield i
         }
     },
+    async quit(timeout: number) {
+        console.log('bye')
+        setTimeout(() => process.exit(0), timeout)
+    }
 }

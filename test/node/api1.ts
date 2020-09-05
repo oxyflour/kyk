@@ -1,5 +1,3 @@
-import Mesh from '../../dist'
-
 function genericArray<T>(a: T) {
     return [a]
 }
@@ -8,16 +6,9 @@ function genericAB<A, B>(a: A, b: B) {
     return { a, b }
 }
 
-export default (node: Mesh) => ({
+export default {
     async testSimple(you: string) {
         return 'test pass ' + you
-    },
-    map: {
-        [node.opts.nodeName]: {
-            async ok() {
-                return node.opts.nodeName + ' ok'
-            }
-        }
     },
     async testThis() {
         return 'this ' + await this.testSimple('this')
@@ -52,4 +43,4 @@ export default (node: Mesh) => ({
         }
         return arr
     },
-})
+}

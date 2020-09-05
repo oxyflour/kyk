@@ -1,7 +1,7 @@
 import path from 'path'
 import * as assert from 'assert'
 
-import Mesh from '../../src'
+import { GrpcServer, GrpcClient } from '../../src/grpc'
 import Api1 from './api1'
 import Api2 from './api2'
 
@@ -11,15 +11,17 @@ const mod1 = path.join(__dirname, 'api1'),
 describe('test', function() {
     this.timeout(60000)
 
-    const node1 = new Mesh({ nodeName: 'node1' }).register(mod1),
-        node2 = new Mesh().register(mod2),
-        node3 = new Mesh().register(mod2),
-        api1 = node2.query<ReturnType<typeof Api1>>(),
-        api2 = node1.query<typeof Api2>()
-    before(async () => {
-        await Promise.all([node1.init(), node2.init()])
-    })
+    const node1 = new GrpcServer(),
+        node2 = new GrpcServer()
+    node1.serve(mod1)
+    node1.start('localhost:12341')
+    node2.serve(mod2)
+    node2.start('localhost:12342')
 
+    const api1 = new GrpcClient('localhost:12341').query<typeof Api1>(),
+        api2 = new GrpcClient('localhost:12342').query<typeof Api2>()
+
+    api2
     it(`should work with simple async function`, async () => {
         assert.equal(await api1.testSimple('this'), 'test pass this')
     })
@@ -34,10 +36,6 @@ describe('test', function() {
 
     it(`should work with nested function within object2`, async () => {
         assert.equal(await api1.nested.method(), 'nested')
-    })
-
-    it(`should call indiced function`, async () => {
-        assert.equal(await api1.map['node1'].ok(), 'node1 ok')
     })
 
     it(`should work with generics`, async () => {
@@ -75,9 +73,10 @@ describe('test', function() {
 
     it(`should throw error with wrong argument type`, async () => {
         try {
+            // TODO: supress `Error: illegal buffer` on stderr
             await api2.testArray('x' as any)
         } catch (err) {
-            assert.equal(err.message, '.SrvTestArrayKykReq.arg: array expected')
+            assert.equal(err.message, '.SrvTestArrayReq.arg: array expected')
         }
     })
 
@@ -130,17 +129,10 @@ describe('test', function() {
         assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
     })
 
-    it(`should work with new joined node`, async () => {
-        await node2.destroy(0)
-        await node3.init()
-        assert.equal(await api2.testDefaultParameters(1), '1x')
-        assert.equal(await api2.testDefaultParameters(1, 'y'), '1y')
-    })
-
     after(async () => {
         await Promise.all([
             node1.destroy(0),
-            node3.destroy(0),
+            node2.destroy(0),
         ])
     })
 })

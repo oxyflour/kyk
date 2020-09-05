@@ -2,6 +2,7 @@ import makeAPI from '../../src/web'
 import * as assert from 'assert'
 
 import Api2 from '../node/api2'
+import { RSA_PKCS1_OAEP_PADDING } from 'constants'
 
 describe('test', function() {
     this.timeout(60000)
@@ -20,7 +21,7 @@ describe('test', function() {
         try {
             await api2.testArray('x' as any)
         } catch (err) {
-            assert.equal(err.message, '.SrvTestArrayKykReq.arg: array expected')
+            assert.equal(err.message, '.SrvTestArrayReq.arg: array expected')
         }
     })
 
@@ -60,5 +61,9 @@ describe('test', function() {
             arr.push(i)
         }
         assert.deepEqual(arr, [1, 2, 3, 4, 5, 6, 7, 8, 9])
+    })
+
+    this.afterAll(async () => {
+        await api2.quit(5000)
     })
 })

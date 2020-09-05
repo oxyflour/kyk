@@ -46,16 +46,6 @@ function formatTypes(types: ts.Type[], checker: ts.TypeChecker) {
     return types.map(type => checker.typeToString(type)).join('\nin ')
 }
 
-export function getModuleAndDeclaration(api: string | any, args = [] as any[]) {
-    const exp  = typeof api === 'string' ? require(api).default : api,
-        mod = typeof exp === 'function' ? exp(...args) : exp,
-        decl = typeof api === 'string' ? api.replace(/\.js$/i, '.d.ts') : `${mod.__filename}`
-    if (!decl) {
-        throw Error(`the argument should be the module path or an object containing __filename attribute`)
-    }
-    return { mod, decl }
-}
-
 export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
     const program = ts.createProgram([file], opts),
         checker = program.getTypeChecker(),
@@ -249,8 +239,8 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
     function walk(entry: string, type: ExportType) {
         if (type instanceof ExportFunc) {
             const [srvName, funcName] = getSrvFuncName(entry),
-                requestType = `${srvName}KykReq`,
-                responseType = `${srvName}KykRes`,
+                requestType = `${srvName}Req`,
+                responseType = `${srvName}Res`,
                 methods = { [funcName]: { requestType, responseType, ...type.opts } }
             nested[srvName] = { methods }
             nested[requestType] = proto(type.args)

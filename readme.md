@@ -1,4 +1,4 @@
-# KyokoMesh
+# Kyoko
 Write grpc microservices in typescript. Just for fun, Don't use.
 
 Note: Installing grpc over proxy may fail beacuse of `needle` issue. Add the following line to your `.npmrc` file
@@ -33,27 +33,13 @@ export default {
 server
 ```bash
 kykm serve api.ts
-# outputs: serving "9316dc36" with 3 entries at 0.0.0.0:62967
+# outputs: grpc server started at 0.0.0.0:5000
 ```
 
 client
 ```bash
-kykm call hello
+kykm call http://localhost:5000/hello
 # outputs: my FAAS
-```
-
-demo.ts
-```typescript
-import Mesh from 'kyoko-mesh'
-import API from './api'
-
-const api = new Mesh().query(API)
-async function run() {
-    for await (const item of api.stream()) {
-        console.log(item)
-    }
-}
-run()
 ```
 
 ## License

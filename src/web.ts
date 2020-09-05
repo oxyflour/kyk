@@ -1,8 +1,8 @@
 import { BinaryWriter, BinaryReader } from 'google-protobuf'
-import { GrpcWebClientBase, AbstractClientBase } from 'grpc-web'
+import { GrpcWebClientBase, MethodDescriptor, GrpcWebClientBaseOptions } from 'grpc-web'
 import { EventIterator } from 'event-iterator'
 
-import { asyncCache, getSrvFuncName, hookFunc, ApiDefinition, metaQuery } from './utils'
+import { getSrvFuncName, hookFunc, ApiDefinition, metaQuery, asyncCache } from './utils'
 
 interface Field {
     id: number
@@ -118,48 +118,52 @@ function deserializeBinary({ fields, nested }: Proto, reader: BinaryReader, out 
     return out
 }
 
-const client = new GrpcWebClientBase({ }),
-    cache = { } as { [key: string]: AbstractClientBase.MethodInfo<any, any> }
-function call(host: string, entry: string, args: any[], proto: any) {
+const methodCache = { } as { [url: string]: MethodDescriptor<any, any> }
+function callService(client: GrpcWebClientBase, entry: string, args: any[], proto: any, opts: { meta: any, url: string }) {
     const [srvName, funcName] = getSrvFuncName(entry),
         { requestType, responseType, requestStream, responseStream } = proto.nested[srvName].methods[funcName],
-        reqType = proto.nested[requestType],
-        resType = proto.nested[responseType],
+        [reqType, resType] = [proto.nested[requestType], proto.nested[responseType]],
         request = Object.keys(reqType.fields).reduce((all, key, idx) => ({ ...all, [key]: args[idx] }), { }),
-        url = `${host}/${srvName}/${funcName}`,
-        info = cache[url] || (cache[url] = new AbstractClientBase.MethodInfo(Object,
-            req => serializeBinary(reqType, req, new BinaryWriter()).getResultBuffer(),
-            bytes => deserializeBinary(resType, new BinaryReader(bytes))))
+        url = `${opts.url}/${srvName}/${funcName}`,
+        info = methodCache[url] || (methodCache[url] = new MethodDescriptor(
+            url, funcName, Object, Object,
+            (req: any) => serializeBinary(reqType, req, new BinaryWriter()).getResultBuffer(),
+            (bytes: any) => deserializeBinary(resType, new BinaryReader(bytes))))
     if (requestStream) {
         throw Error('request stream not supported')
     } else if (responseStream) {
-        const stream = client.serverStreaming(url, request, { }, info)
-        return new EventIterator((push, pop, fail) => {
-            stream
-                .on('data', data => push(data.result))
-                .on('end', pop)
-                .on('error', err => fail({ name: 'IteratorError', ...err }))
-        }, () => {
-            stream.cancel()
+        const stream = client.serverStreaming(url, request, opts.meta, info)
+        return new EventIterator(queue => {
+            const ondata = ({ result }: any) => queue.push(result)
+            stream.on('data', ondata)
+            stream.on('end', queue.stop)
+            stream.on('error', queue.fail as any)
+            return () => {
+                stream.removeListener('data', ondata)
+                stream.removeListener('end', queue.stop)
+                stream.removeListener('error', queue.fail as any)
+                stream.cancel()
+            }
         })
     } else {
         return new Promise((resolve, reject) => {
             const callback = (err: any, ret: any) => err ? reject(err) : resolve(ret.result)
-            client.rpcCall(url, request, { }, info, callback)
+            client.rpcCall(url, request, opts.meta, info, callback)
         })
     }
 }
 
-const getProto = asyncCache(async (host: string, entry: string) => {
-    return JSON.parse(await call(host, metaQuery.entry, [entry], metaQuery.proto) as any)
-})
-
-function makeCall(host: string, entry: string, args: any[]) {
+interface CallOptions {
+    proto: (entry: string) => Promise<any>
+    meta: any
+    url: string
+}
+function call(client: GrpcWebClientBase, entry: string, args: any[], opts: CallOptions) {
     // for async functions
     const then = async (resolve: Function, reject: Function) => {
         try {
-            const proto = await getProto(host, entry)
-            resolve(call(host, entry, args, proto))
+            const proto = await opts.proto(entry)
+            resolve(callService(client, entry, args, proto, opts))
         } catch (err) {
             reject(err)
         }
@@ -168,8 +172,8 @@ function makeCall(host: string, entry: string, args: any[]) {
     let proxy: AsyncIterableIterator<any>
     const next = async () => {
         if (!proxy) {
-            const proto = await getProto(host, entry),
-                ret = call(host, entry, args, proto) as any
+            const proto = await opts.proto(entry),
+                ret = callService(client, entry, args, proto, opts) as any
             proxy = ret[Symbol.asyncIterator]()
         }
         return await proxy.next()
@@ -180,7 +184,15 @@ function makeCall(host: string, entry: string, args: any[]) {
     return { then, [Symbol.asyncIterator]: () => ({ next }), return: ret }
 }
 
-export default <T extends ApiDefinition>(host: string) => hookFunc({ } as T, (...stack) => {
-    const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
-    return (...args: any[]) => makeCall(host, entry, args)
-})
+export default <T extends ApiDefinition>(url: string, meta = { } as any, opts = { } as GrpcWebClientBaseOptions) => {
+    // only binary format is supported
+    // https://github.com/dataform-co/dataform/blob/master/grpc-web-proxy/index.ts#L228
+    const client = new GrpcWebClientBase({ format: 'binary', ...opts })
+    const proto = asyncCache(async (entry: string) => {
+        return JSON.parse(await callService(client, metaQuery.entry, [entry], metaQuery.proto, { meta, url }) as string)
+    })
+    return hookFunc({ } as T, (...stack) => {
+        const entry = stack.map(({ propKey }) => propKey).reverse().join('/')
+        return (...args: any[]) => call(client, entry, args, { url, meta, proto })
+    })
+}

@@ -1,6 +1,6 @@
 {
-  "name": "kyoko-mesh",
-  "version": "0.4.24",
+  "name": "kykm",
+  "version": "0.4.25",
   "description": "",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
@@ -9,13 +9,13 @@
   },
   "scripts": {
     "prepublish": "npm run build",
-    "test:web:grpc": "node dist/cli.js start test/node/api2.ts",
-    "test:web:proxy": "grpcwebproxy --backend_addr=localhost:5000 --server_http_max_read_timeout=600s --server_http_max_write_timeout=600s --run_tls_server=false --allow_all_origins",
-    "test:web:www": "parcel build test/web/index.ts -o test && mocha-headless-chrome -f test/web/index.html",
-    "test:web:win": "cmd /c \"start npm run test:web:grpc\" && cmd /c \"start npm run test:web:proxy\" && npm run test:web:www",
+    "build": "tsc",
+    "test:web:www": "parcel build test/web/index.ts -o test-web && mocha-headless-chrome -f test/web/index.html",
+    "test:web:serve": "node dist/cli.js serve test/node/api2.ts",
+    "test:web:prepare": "node -e \"require('child_process').spawn('npm run test:web:serve', { shell: true, detached: true, stdio: 'ignore' }).unref()\"",
+    "test:web": "npm run test:web:prepare && npm run test:web:www",
     "test:node": "mocha -r ts-node/register test/node/index.ts",
-    "test": "npm build && npm run test:node",
-    "build": "tsc"
+    "test": "npm run build && npm run test:node && npm run test:web"
   },
   "browserslist": [
     "last 1 Chrome versions"
@@ -24,29 +24,27 @@
   "author": "",
   "license": "ISC",
   "devDependencies": {
-    "@types/chai": "^4.1.2",
-    "@types/get-port": "^3.2.0",
-    "@types/mocha": "^2.2.48",
-    "@types/node": "^10.14.12",
-    "chai": "^4.1.2",
-    "concurrently": "^5.1.0",
-    "mocha": "^5.0.0",
-    "mocha-headless-chrome": "^3.0.0",
+    "@dataform/grpc-web-proxy": "^0.2.0",
+    "@types/chai": "^4.2.12",
+    "@types/commander": "^2.12.2",
+    "@types/mocha": "^8.0.3",
+    "@types/node": "^14.6.2",
+    "chai": "^4.2.0",
+    "commander": "^6.1.0",
+    "mocha": "^8.1.3",
+    "mocha-headless-chrome": "^3.1.0",
     "parcel": "^1.12.4",
-    "tslint": "^5.9.1"
+    "typescript": "^4.0.2"
   },
   "dependencies": {
-    "@types/google-protobuf": "^3.7.2",
-    "babel-polyfill": "^6.26.0",
-    "commander": "^2.19.0",
-    "etcd3": "^0.2.11",
-    "event-iterator": "^1.2.0",
-    "get-port": "^3.2.0",
-    "google-protobuf": "^3.11.4",
-    "grpc": "^1.22.2",
-    "grpc-web": "^1.0.7",
-    "protobufjs": "^6.8.8",
-    "ts-node": "^7.0.1",
-    "typescript": "^3.8.3"
+    "@types/google-protobuf": "^3.7.3",
+    "@types/mz": "^2.7.1",
+    "event-iterator": "^2.0.0",
+    "google-protobuf": "^3.13.0",
+    "grpc": "^1.24.3",
+    "grpc-web": "^1.2.1",
+    "mz": "^2.7.0",
+    "protobufjs": "^6.10.1",
+    "ts-node": "^9.0.0"
   }
 }
