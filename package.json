@@ -1,11 +1,11 @@
 {
-  "name": "kykm",
+  "name": "kyk",
   "version": "0.4.25",
   "description": "",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "bin": {
-    "kykm": "./dist/cli.js"
+    "kyk": "./dist/cli.js"
   },
   "scripts": {
     "prepublish": "npm run build",
