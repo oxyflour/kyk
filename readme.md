@@ -32,13 +32,13 @@ export default {
 
 server
 ```bash
-kykm serve api.ts
+kyk serve api.ts
 # outputs: grpc server started at 0.0.0.0:5000
 ```
 
 client
 ```bash
-kykm call http://localhost:5000/hello
+kyk call http://localhost:5000/hello
 # outputs: my FAAS
 ```
 
