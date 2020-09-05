@@ -2,6 +2,7 @@ export class A {
     a = 1 + 1
     b = 'b'
     c = [ ] as string[]
+    d?: number
 
     // WARNING: the following initilizer is not supported
     // k = ['c'] as string[]
@@ -36,6 +37,9 @@ export default {
     },
     async testBuffer(buf: Buffer) {
         return Buffer.from('ret ' + buf.toString())
+    },
+    async testOptional(x?: string) {
+        return x
     },
     async testClass(a: Partial<A>) {
         return a

@@ -28,7 +28,7 @@ export class ExportMap {
 export class ExportFunc {
     constructor(
         public args: ExportObject, public ret: ExportType,
-        public opts: { requestStream: boolean, responseStream: boolean }) { }
+        public opts: { required: boolean, requestStream: boolean, responseStream: boolean }) { }
 }
 export type ExportType = string | ExportFunc | ExportObject | ExportArray | ExportMap
 
@@ -58,6 +58,16 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
             checker.getTypeOfSymbolAtLocation(defaultExport, sourceFile)
     if (!exportType) {
         throw Error(`no default export found for file "${file}"`)
+    }
+
+    function getUnionSubtype(type: ts.Type) {
+        const { types } = type as any as { types: ts.Type[] },
+            nonNulls = types.filter(type => !(type.flags & ts.TypeFlags.Undefined))
+        if (nonNulls.length !== 1) {
+            throw Error(`can not parse type ${formatTypes(types, checker)}`)
+        }
+        const [subType] = nonNulls
+        return subType
     }
 
     function parseExportType(type: ts.Type, stack: ts.Type[]): ExportType {
@@ -100,25 +110,27 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
             const [typeArgument] = type.aliasTypeArguments
             return parseExportType(typeArgument, next)
         } else if ((type.flags & ts.TypeFlags.Object) && symbol && symbol.members) {
-            // use cache to avoid recursive types
-            if ((type as any).cachedTypeObject) {
-                return (type as any).cachedTypeObject
+            const typeAsCache = type as any
+            if (typeAsCache.cachedTypeObject) {
+                return typeAsCache.cachedTypeObject
             }
             const isClass = symbol.valueDeclaration && ts.isClassLike(symbol.valueDeclaration),
                 result = { } as { [name: string]: ExportMember },
                 [parent] = stack,
                 isParentPartial = parent && parent.aliasSymbol && parent.aliasSymbol.escapedName === 'Partial',
                 output = new ExportObject(result)
-            ;(type as any).cachedTypeObject = output
+            typeAsCache.cachedTypeObject = output
             let id = 1
             for (const symbol of type.getProperties()) {
                 const isFuncion = symbol.valueDeclaration && ts.isFunctionLike(symbol.valueDeclaration)
                 if (symbol.valueDeclaration && !(isClass && isFuncion)) {
                     const decl = symbol.valueDeclaration as ts.PropertyDeclaration,
                         initializer = decl.initializer && ts.transpile(decl.initializer.getFullText()),
-                        memberType = (symbol as any).type || checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
+                        symbolType = (symbol as any).type || checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
+                        [memberType, unionWithUndefined] = symbolType.flags & ts.TypeFlags.Union ?
+                            [getUnionSubtype(symbolType), true] : [symbolType, false],
                         member = parseExportType(memberType, next),
-                        required = !isParentPartial && !decl.questionToken
+                        required = !isParentPartial && !decl.questionToken && !unionWithUndefined
                     result[symbol.escapedName.toString()] = { id: id ++, member, initializer, required }
                 }
             }
@@ -143,8 +155,9 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                             const decl = symbol.valueDeclaration as ts.ParameterDeclaration,
                                 initializer = decl.initializer && ts.transpile(decl.initializer.getFullText()),
                                 type = checker.getTypeOfSymbolAtLocation(symbol, symbol.valueDeclaration),
-                                member = parseExportType(type, next),
-                                required = !decl.questionToken
+                                [memberType, required] = type.flags & ts.TypeFlags.Union ?
+                                    [getUnionSubtype(type), false] : [type, !decl.questionToken],
+                                member = parseExportType(memberType, next)
                             args[symbol.escapedName.toString()] = { id: index + 1, member, initializer, required }
                         }
                     }
@@ -152,12 +165,14 @@ export function getDefaultExportType(file: string, opts: ts.CompilerOptions) {
                 const argsType = new ExportObject(args),
                     returnType = signature.getReturnType() as TypeReferenceType
                 if (returnType.symbol && returnType.symbol.escapedName === 'Promise' && returnType.typeArguments) {
-                    const [ret] = returnType.typeArguments as TypeReferenceType[]
-                    return new ExportFunc(argsType, parseExportType(ret, next), { requestStream, responseStream: false })
+                    const [type] = returnType.typeArguments as TypeReferenceType[],
+                        [ret, required] = type.flags & ts.TypeFlags.Union ? [getUnionSubtype(type), false] : [type, true]
+                    return new ExportFunc(argsType, parseExportType(ret, next), { required, requestStream, responseStream: false })
                 } else if (returnType.symbol && returnType.typeArguments &&
                         (returnType.symbol.escapedName === 'AsyncIterableIterator' || returnType.symbol.escapedName === 'AsyncGenerator')) {
-                    let [ret] = returnType.typeArguments as TypeReferenceType[]
-                    return new ExportFunc(argsType, parseExportType(ret, next), { requestStream, responseStream: true })
+                    const [type] = returnType.typeArguments as TypeReferenceType[],
+                        [ret, required] = type.flags & ts.TypeFlags.Union ? [getUnionSubtype(type), false] : [type, true]
+                    return new ExportFunc(argsType, parseExportType(ret, next), { required, requestStream, responseStream: true })
                 } else {
                     throw Error(`return value is not an async function or iterator, type ${formatTypes(next, checker)}`)
                 }
@@ -190,15 +205,15 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
                 throw Error(`unknown type ${type}`)
             }
         } else if (type instanceof ExportObject) {
-            // use weak map to avoid stack overflow
-            if ((type as any).cachedProtoObject) {
-                return (type as any).cachedProtoObject
+            const typeAsCache = type as any
+            if (typeAsCache.cachedProtoObject) {
+                return typeAsCache.cachedProtoObject
             }
 
             const fields = { } as any,
                 nested = { } as any,
                 output = { fields, nested } as any
-            ;(type as any).cachedProtoObject = output
+            typeAsCache.cachedProtoObject = output
             for (const [name, { id, member, required, initializer }] of Object.entries(type.members)) {
                 let type = proto(member)
                 if (type.cachedName) {
@@ -244,7 +259,7 @@ export function getProtoObject(file: string, api: any, opts: ts.CompilerOptions)
                 methods = { [funcName]: { requestType, responseType, ...type.opts } }
             nested[srvName] = { methods }
             nested[requestType] = proto(type.args)
-            nested[responseType] = proto(new ExportObject({ result: { id: 1, member: type.ret, required: true } }))
+            nested[responseType] = proto(new ExportObject({ result: { id: 1, member: type.ret, required: type.opts.required } }))
         } else if (type instanceof ExportObject) {
             for (const [name, { member }] of Object.entries(type.members)) {
                 walk(entry + '/' + name, member)

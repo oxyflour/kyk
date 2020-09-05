@@ -96,9 +96,14 @@ describe('test', function() {
         }
     })
 
+    it(`should work with optional values`, async () => {
+        assert.equal(await api2.testOptional(), '')
+        assert.equal(await api2.testOptional('x'), 'x')
+    })
+
     it(`should work with partial class`, async () => {
-        assert.deepEqual(await api2.testClass({ }), { a: 2, b: 'b', c: [ ] })
-        assert.deepEqual(await api2.testClass({ a: 1, c: ['c'] }), { a: 1, b: 'b', c: ['c'] })
+        assert.deepEqual(await api2.testClass({ }), { a: 2, b: 'b', c: [ ], d: 0 })
+        assert.deepEqual(await api2.testClass({ a: 1, c: ['c'] }), { a: 1, b: 'b', c: ['c'], d: 0 })
     })
 
     it(`should work with default parameters`, async () => {
