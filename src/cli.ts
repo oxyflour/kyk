@@ -89,9 +89,11 @@ program.command('serve [args...]')
                     fs.watchFile(fileName, () => watcher.resolve())
                 }
             }
+            let forked
             while (true) {
                 try {
                     const server = await start()
+                    forked = forked || fork()
                     console.log(`INFO: waiting for file changes...`)
                     await new Promise(resolve => watcher.resolve = resolve)
                     console.log(`INFO: reloading service...`)
@@ -110,8 +112,8 @@ program.command('serve [args...]')
                 await startAndWatch()
             } else {
                 await start()
+                fork()
             }
-            fork()
         } else {
             new GrpcWebProxy({
                 backend: `http://127.0.0.1:${opts.listenPort}`,
